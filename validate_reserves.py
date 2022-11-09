@@ -99,7 +99,9 @@ def compile_proofs(rpc, proof):
         m_sigs = proof_data["claim"]["m"]
         n_keys = proof_data["claim"]["n"]
         keys = proof_data["keys"]
-        logging.info("Keys being proven against: {}".format(keys))
+        xpubs = proof_data.get("xpub", [])
+        logging.info("Multisig {}/{} keys being proven against: {}".format(m_sigs, n_keys, keys))
+        logging.info("or addresses derived from pubkey: {}".format(xpubs))
 
         # Lastly, addresses
         for addr_info in proof_data["address"]:
@@ -108,72 +110,81 @@ def compile_proofs(rpc, proof):
                 logging.warning("Address {} is marked as unspendable, skipping this value".format(addr_info["addr"]))
                 continue
 
-            # Each address should have compressed or uncompressed keys in this set
-            pubkeys_left = copy.deepcopy(keys)
-            # Switch to compressed
-            if addr_info["addr_type"] != "sh":
-                pubkeys_left = []
-                for key in keys:
-                    # Trying "both" compressed versions to avoid additional python dependencies
-                    even_key = "02"+key[2:-64]
-                    odd_key = "03"+key[2:-64]
-                    if even_key in addr_info["script"]:
-                        pubkeys_left.append(even_key)
-                    elif odd_key in addr_info["script"]:
-                        pubkeys_left.append(odd_key)
+            elif addr_info["addr_type"] in ("sh", "sh_wsh", "wsh"):
+
+                # Each address should have compressed or uncompressed keys in this set
+                pubkeys_left = copy.deepcopy(keys)
+
+                if addr_info["addr_type"] in ("wsh", "sh_wsh"): # Switch to compressed
+                    pubkeys_left = []
+                    for key in keys:
+                        # Trying "both" compressed versions to avoid additional python dependencies
+                        even_key = "02"+key[2:-64]
+                        odd_key = "03"+key[2:-64]
+                        if even_key in addr_info["script"]:
+                            pubkeys_left.append(even_key)
+                        elif odd_key in addr_info["script"]:
+                            pubkeys_left.append(odd_key)
+                        else:
+                            raise Exception("Wrong compressed keys?")
+
+                # Should have one additional vanitygen key
+                assert len(pubkeys_left) == n_keys - 1
+
+                # Next, we make sure the script is a multisig template
+                pubkey_len = 33*2 if addr_info["addr_type"] != "sh" else 65*2
+                pubkey_sep = hex(int(pubkey_len/2))[2:]
+
+                script = addr_info["script"]
+                if script[:2] != hex(0x50+m_sigs)[2:]:
+                    raise Exception("Address script doesn't match multisig: {}".format(script))
+                script = script[2:]
+                found_vanitykey = False
+                wrong_keys = False
+                ordered_pubkeys = []
+                for i in range(len(pubkeys_left)+1):
+                    if script[:2] != pubkey_sep:
+                        raise Exception("Address script doesn't match multisig: {}".format(pubkey_sep))
+                    pubkey = script[2:2+pubkey_len]
+                    ordered_pubkeys.append(pubkey)
+                    script = script[2+pubkey_len:]
+                    if pubkey not in pubkeys_left:
+                        if found_vanitykey == False:
+                            found_vanitykey = True
+                        else:
+                            # Some testnet values have wrong keys, ignore balance and continue
+                            wrong_keys = True
+                            break
                     else:
-                        raise Exception("Wrong compressed keys?")
+                        pubkeys_left.remove(pubkey)
 
-            # Should have one additional vanitygen key
-            assert len(pubkeys_left) == n_keys - 1
+                if wrong_keys:
+                    logging.warning("Address {} is missing some given keys, skipping these values".format(addr_info["addr"]))
+                    continue
 
-            # Next, we make sure the script is a multisig template
-            pubkey_len = 33*2 if addr_info["addr_type"] != "sh" else 65*2
-            pubkey_sep = hex(int(pubkey_len/2))[2:]
+                assert len(pubkeys_left) == 0
+                assert found_vanitykey
 
-            script = addr_info["script"]
-            if script[:2] != hex(0x50+m_sigs)[2:]:
-                raise Exception("Address script doesn't match multisig: {}".format(script))
-            script = script[2:]
-            found_vanitykey = False
-            wrong_keys = False
-            ordered_pubkeys = []
-            for i in range(len(pubkeys_left)+1):
-                if script[:2] != pubkey_sep:
-                    raise Exception("Address script doesn't match multisig: {}".format(pubkey_sep))
-                pubkey = script[2:2+pubkey_len]
-                ordered_pubkeys.append(pubkey)
-                script = script[2+pubkey_len:]
-                if pubkey not in pubkeys_left:
-                    if found_vanitykey == False:
-                        found_vanitykey = True
-                    else:
-                        # Some testnet values have wrong keys, ignore balance and continue
-                        wrong_keys = True
-                        break
+                if script != hex(0x50+n_keys)[2:]+"ae":
+                    raise Exception("Address script doesn't match multisig: {}".format(script))
+
+                # Lastly, construct the descriptor for querying
+                ordered_join = ",".join(ordered_pubkeys)
+                if addr_info["addr_type"] == "sh":
+                    descriptor = "sh(multi({},{}))".format(m_sigs, ordered_join)
+                elif addr_info["addr_type"] == "sh_wsh":
+                    descriptor = "sh(wsh(multi({},{})))".format(m_sigs, ordered_join)
+                elif addr_info["addr_type"] == "wsh":
+                    descriptor = "wsh(multi({},{}))".format(m_sigs, ordered_join)
                 else:
-                    pubkeys_left.remove(pubkey)
+                    raise Exception("Unexpected addr_type")
 
-            if wrong_keys:
-                logging.warning("Address {} is missing some given keys, skipping these values".format(addr_info["addr"]))
-                continue
-
-            assert len(pubkeys_left) == 0
-            assert found_vanitykey
-
-            if script != hex(0x50+n_keys)[2:]+"ae":
-                raise Exception("Address script doesn't match multisig: {}".format(script))
-
-            # Lastly, construct the descriptor for querying
-            ordered_join = ",".join(ordered_pubkeys)
-            if addr_info["addr_type"] == "sh":
-                descriptor = "sh(multi({},{}))".format(m_sigs, ordered_join)
-            elif addr_info["addr_type"] == "sh_wsh":
-                descriptor = "sh(wsh(multi({},{})))".format(m_sigs, ordered_join)
-            elif addr_info["addr_type"] == "wsh":
-                descriptor = "wsh(multi({},{}))".format(m_sigs, ordered_join)
+            elif addr_info["addr_type"] in ("wpkh"):
+                # check xpub, then we present descriptor as script
+                assert xpubs[0] in addr_info["script"]
+                descriptor = addr_info["script"]
             else:
-                raise Exception("Unexpected addr_type")
+                raise Exception("Unknown address type {}".format(addr_info["addr_type"]))
 
             addresses.append({"desc":descriptor})
 
