@@ -3,35 +3,36 @@
 By running these validation tools, one can gain assurances that the sum of BTC deposits(reserves) is strictly
 more than the sum of customer liabilities at a given timeframe.
 
-### Installation (only required for PoR tool)
+### Installation
+
+You may wish to switch to a Python virtual environment first.
 
 ```
-pip3 install -r requirements.txt
+$ pip3 install -r requirements.txt
 ```
 
-and also requires a running bitcoin daemon or QT service on the correct network, with a reachable RPC server.
+To validate reserves you will require a running bitcoin daemon, with a reachable RPC server, dedicated to this task.
 
-### Reserves
+## Reserves
 
 This tool will intake a proof file showing all BitMEX scripts, rewind the bitcoind's state to the stated height, and outputs the amount
 of verified BTC under the control of the stated keys at that block height. You must validate yourself that the public keys belong to BitMEX!
 
-## ⚠️Warning⚠️
+* Grab mainnet reserves dataset from: https://public.bitmex.com/?prefix=data/porl/
+* Grab testnet reserves dataset from: https://public-testnet.bitmex.com/?prefix=data/porl/
 
-<span style="color: red">NOTE: You are required to be running a bitcoind node v0.21 or higher.
-Running `validate_reserves.py` will modify your bitcoind's chainstate. While designed to be recoverable, it is absolutely not usable against production systems!
+### ⚠️ Warning ⚠️
+
+NOTE: You are required to be running a bitcoind node v0.21 or higher.
+Running `validate_reserves.py` will modify your bitcoind's chainstate by invaliding a block to cause a local rewind. While designed to be recoverable, ensure you have *no other* services using the bitcoind at the same time, or they too will observe a chain rewind.
 Validation may take a long time to complete, 30 minutes or longer.
-Caveat emptor!!!</span>
 
 You should run this on a local node that you can control, and then reset the chainstate after doing so.
 
-You may need to run the script multiple times in the case where Core RPC becomes unexpectedly unresponsive due to the computational
-load. As long as the `--reconsider` flag isn't given, your Core node will continue to reorg in the background,
+You may need to run the script multiple times if Bitcoin Core RPC becomes unexpectedly unresponsive due to the load while rewinding blocks.
+As long as the `--reconsider` flag isn't given, your Core node will continue to 'reorg' in the background,
 succeeding eventually.
 
-## ⚠️Warning⚠️
-
-Grab reserves datasets here: TBD
 
 Sample output from running PoR tool on testnet dataset against testnet bitcoind RPC server.
 ```
@@ -58,15 +59,18 @@ $ python3 validate_reserves.py --reconsider --rpcauth username:password --rpcpor
 INFO:root:Reconsidering blocks and exiting.
 ```
 
-Note that the RPC server port default is different for different networks: 8332(mainnet), 18332(testnet). It is highly recommended
-that this tool is run against an unpruned bitcoind, otherwise the script may fail depending on how aggressive pruning is set.
+Note that the RPC server port default is different for different networks: 8332(mainnet), 18332(testnet).
+Note that Bitcoin Core supports 'pruning' block undo data beyond a certain depth. It is highly recommended
+that this tool is run against an unpruned bitcoind, otherwise the script may fail if it tries to rewind deeper than pruning allows.
 
-### Liabilities
+## Liabilities
 
 This pair of tools generate and validate a custom implementation of [Maxwell Proof of Liabilities](https://eprint.iacr.org/2018/1139.pdf).
 Validation requires Python 3.7 and above.
 
-Sample usage from a testnet dataset:
+Effectively BitMEX runs this internally, using our account balances to create the proof file.
+The tool maintains a nonce for each user in `nonces.txt`, stable between proofs.
+
 ```
 $ # Run by BitMEX to compile the merkle proofs and generated nonces for decrypting leaves
 $ python3 generate_liabilities.py --liabilities liabilities-100-20210225D150000099012000.csv --blockheight 100 > liabilities-100-proof.dat
@@ -77,6 +81,8 @@ $ cat nonces.txt
 350084,5def3d7f4394d7f8b462e28d7b0e99554ee023d92c4e587ebd7d0cfb09d7cc05
 ...
 ```
+
+We then write the output file (`liabilities-100-proof.dat`) to the URLs given above:
 
 ```
 $ # Run by BitMEX users to validate their own branches of the merkle proof
@@ -126,4 +132,5 @@ NOTE: child node values are commmitted to individually to avoid [specific attack
 # Issues?
 
 The output's "total liabilities" value can be directly compared against the proved reserves value to give assurances about
-solvency. If a user is unable to prove their subbalance's inclusion in this total value, please contact us at TDB for resolution.
+solvency. If a user is unable to prove their subbalance's inclusion in this total value, please contact us at https://www.bitmex.com/contact for resolution.
+
