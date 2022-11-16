@@ -84,11 +84,11 @@ We provide a tool in two parts, firstly to generate and secondly to verify a cus
 The starting point is a list of the liabilitity to each user, keyed by an account number:
 
     $ cat liabilities-100-20210225D150000099012000.csv
-    account, amount
-    1, 1000
-    2, 3000
-    4, 4000000000
-    5, 0
+    account,amount
+    1,1000
+    2,3000
+    4,4000000000
+    5,0
 
 Each account is issued a single 32-byte 'account nonce' for the lifetime of that account, which is shared with the user.
 For this demonstration we keep these in a text file `nonces.txt`, note that any missing nonces will be generated with each liabilities run:
@@ -105,7 +105,7 @@ Next all user balances are split ("blinded") into multiple parts, with the ratio
 
 Next the liability chunks are arranged as the leaves of a merkle sum proof, a modified version of the [Maxwell Proof of Liabilities](https://bitcointalk.org/index.php?topic=595180.0) scheme.
 
-Each leaf of the tree contains the `leaf_value` (in satoshis) in plaintext and, using the user's sub_nonce, a commitment of the leaf_value and the index of the leaf. All input numerical values being serialized as 8-byte unsigned values.
+Each leaf of the tree contains the `leaf_value` (in satoshis) in plaintext and, using the user's `sub_nonce`, a commitment of the `leaf_value` and the index of the leaf `leaf_index`. All input numerical values being serialized as 8-byte unsigned values.
 
     leaf_digest = HMAC256(sub_nonce, leaf_value || leaf_index)
 
@@ -155,7 +155,7 @@ NOTE: child node values are commmitted to individually to avoid [specific attack
 
 Validation requires Python 3.7 and above.
 
-We will run as user `2` above, who has been communicated the account nonce `b88860add96111d84d38a500266df715158f91375d9aaa98aa58356f9a872412` above.
+We will run as user `2` above, who has been communicated the account nonce `b88860add96111d84d38a500266df715158f91375d9aaa98aa58356f9a872412`.
 
     % python3 validate_liabilities.py --proof liabilities-100-proof.csv --account 2 --account_nonce b88860add96111d84d38a500266df715158f91375d9aaa98aa58356f9a872412
     Number of leaf nodes to scan 8
