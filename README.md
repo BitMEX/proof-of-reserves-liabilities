@@ -1,13 +1,28 @@
 # Tool Suite for Generating and Validating Proofs of Reserves(PoR) and Liabilities(PoL)
 
-By running these validation tools, one can gain assurances that the sum of BTC deposits(reserves) is strictly
-more than the sum of customer liabilities at a given timeframe.
+These tools allow you to independantly verify exchange solvency by auditing that stated reserves exist and checking they exceed the known liabilities of the exchange to users.
+
+BitMEX regularly publish our reserves and liabilities here:
+
+* mainnet dataset: https://public.bitmex.com/?prefix=data/porl/
+* testnet dataset: https://public-testnet.bitmex.com/?prefix=data/porl/
+
+As a user you can verify that your own liability, plus that of the insurance fund is included.
+
+A Walkthrough of the tools and methodology is available at:
+
+* BitMEX Research, 12 Aug 2021 [Fixing The Privacy Gap In Proof Of Liability Protocols](https://blog.bitmex.com/addressing-the-privacy-gap-in-proof-of-liability-protocols/)
+* BitMEX Research, 13 Aug 2021 [Proof of Reserves & Liabilities – BitMEX Demonstration](https://blog.bitmex.com/proof-of-reserves-liabilities-bitmex-demonstration/)
+* BitMEX Research, 9 Nov 2022 [BitMEX Provides Snapshot Update to Bitcoin Proof of Reserves & Proof of Liabilities](https://blog.bitmex.com/bitmex-provides-snapshot-update-to-proof-of-reserves-proof-of-liabilities/)
+
 
 ### Installation
 
 You may wish to switch to a Python virtual environment first.
 
 ```
+$ python -m venv venv
+$ . venv/bin/activate
 $ pip3 install -r requirements.txt
 ```
 
@@ -15,11 +30,8 @@ To validate reserves you will require a running bitcoin daemon, with a reachable
 
 ## Reserves
 
-This tool will intake a proof file showing all BitMEX scripts, rewind the bitcoind's state to the stated height, and outputs the amount
-of verified BTC under the control of the stated keys at that block height. You must validate yourself that the public keys belong to BitMEX!
+This tool will take a proof file containing the balances of all BitMEX addresses, plus the locking scripts used to derive the address from exchange keys. It takes control of a Bitcoin Core (bitcoind) instance, rewinds the bitcoin chain state to that of the prooof, then verifies the claimed Bitcoin is indeed under the control of the given keys at that block height. You must validate yourself that the public keys belong to BitMEX!
 
-* Grab mainnet reserves dataset from: https://public.bitmex.com/?prefix=data/porl/
-* Grab testnet reserves dataset from: https://public-testnet.bitmex.com/?prefix=data/porl/
 
 ### ⚠️ Warning ⚠️
 
@@ -29,7 +41,7 @@ Validation may take a long time to complete, 30 minutes or longer.
 
 You should run this on a local node that you can control, and then reset the chainstate after doing so.
 
-You may need to run the script multiple times if Bitcoin Core RPC becomes unexpectedly unresponsive due to the load while rewinding blocks.
+You may need to run the script multiple times if Bitcoin Core RPC becomes unresponsive due to the load while rewinding blocks.
 As long as the `--reconsider` flag isn't given, your Core node will continue to 'reorg' in the background,
 succeeding eventually.
 
@@ -65,36 +77,93 @@ that this tool is run against an unpruned bitcoind, otherwise the script may fai
 
 ## Liabilities
 
-This pair of tools generate and validate a custom implementation of [Maxwell Proof of Liabilities](https://eprint.iacr.org/2018/1139.pdf).
+We provide a tool in two parts, firstly to generate and secondly to verify a custom implementation of [Maxwell Proof of Liabilities](https://eprint.iacr.org/2018/1139.pdf) using a novel blinding approach to make user balances pseudonymous.
+
+### Creation of Liabilities
+
+The starting point is a list of the liabilitity to each user, keyed by an account number:
+
+    $ cat liabilities-100-20210225D150000099012000.csv
+    account, amount
+    1, 1000
+    2, 3000
+    4, 4000000000
+    5, 0
+
+Each account is issued a single 32-byte 'account nonce' for the lifetime of that account, which is shared with the user.
+For this demonstration we keep these in a text file `nonces.txt`, note that any missing nonces will be generated with each liabilities run:
+
+    $ cat nonces.txt
+    2,b88860add96111d84d38a500266df715158f91375d9aaa98aa58356f9a872412
+    3,38de14dcd1425739ddbe2bcf7505c1bac602fd185727dc7f2fa9ddaeff9a36c9
+
+For convience we number liabilities based on the prevailing bitcoin block height. We first derive a sub-nonce for each user at this height, which permits participating in peer validation of a particular liabilties datset without revealing all past (and future) account balances:
+
+    sub_nonce = sha256(account_nonce || block_height || account_number)
+
+Next all user balances are split ("blinded") into multiple parts, with the ratio of the split determined by a random number generator, thereby information about the distribution of account balances, and active users over time on the participating platform is no longer revealed. The parts are shuffled into a random order.
+
+Next the liability chunks are arranged as the leaves of a merkle sum proof, a modified version of the [Maxwell Proof of Liabilities](https://bitcointalk.org/index.php?topic=595180.0) scheme.
+
+Each leaf of the tree contains the `leaf_value` (in satoshis) in plaintext and, using the user's sub_nonce, a commitment of the leaf_value and the index of the leaf. All input numerical values being serialized as 8-byte unsigned values.
+
+    leaf_digest = HMAC256(sub_nonce, leaf_value || leaf_index)
+
+Including the `leaf_index` prevents two identical `leaf_value`'s for the same user (unlikely!) having an identical `leaf_digest`.
+
+The binary tree construction continues, node by node, up the tree. The root of the tree therefore commits to the sum total of all liabilities of all the leaves:
+
+```
+node_value = left_value + right_value
+node_digest = sha256(left_digest||left_value||right_digest||right_value)
+```
+
+Continuing our sample dataset:
+
+    % python3 generate_liabilities.py --liabilities liabilities-100-20210225D150000099012000.csv --blockheight 100 | tee liabilities-100-proof.csv
+    block_height:100
+    85b0a83970a74a6ad0ee5d4bec5d3afe0048d18b8342e31e2d3a45e0f17879c7,4000004000
+    4e6661db50e4ec1c42204c471c0a6fa2a8749127368f3358c340752208b160c9,963611993
+    128b3b2bd3f6bde35d5ac2ba0a37def53fad7a607e6cdd76ee4ad39472b44447,3036392007
+    448e972f7919df255c250b61d6ae1ea165f94cae229f3f610359ae0e2e63acb9,963610699
+    bfa7eddb8a0a00f8e1eda939c41eaba51f9555b32d45b6f5828bca3950eea31f,1294
+    51fb2bcf79c0439694c391960cfc0838db369b6fb2687c1fd4636476a2c34ca7,2039
+    9649f6034051c9c81e3d246ae90473da35a8c02b4321c1b61436b75da139cf53,3036389968
+    69c492be8d5b1f3cc507047460cabc116495e03fa6c76a7767655a94c2b9ae4f,963610032
+    acb9b9fb9ae63ae09927dac870fa203d0113dade58f20a9855193b121d3ed035,667
+    cbcdfae2f947e2b5b7dc2268f0f02f230867b77a0742940af16eff46f457a10e,0
+    003c7fc49a6a476894dd6edfca066d5e3fe01cc63906214134fb6e2ee06a7d83,1294
+    4c28a5dda0bb0dc42af1d942ea12b1f5fe1e3a22049de33166262c724363df63,333
+    2150701b63061ebffa09aa4a0fb239fd59143e6f7ba7cdec3714412d09b97db3,1706
+    f7c28544e2beb1abe170ca4d1aa177236f8e43383c2e83420bcbe8375aa4ba9b,1543636957
+    943f858e804d09d241b05c9d063030da551ca4bde5133b303c8f23a4b76a5fde,1492753011
+
+    $ cat nonces.txt
+    2,b88860add96111d84d38a500266df715158f91375d9aaa98aa58356f9a872412
+    3,38de14dcd1425739ddbe2bcf7505c1bac602fd185727dc7f2fa9ddaeff9a36c9
+    1,4b014f71332f674b47ccec77ac055c7f6e94f7968afe15b9ffb63b9c392ee97a
+    4,b4fb0f6cb39e1b47e159996d54121309d92fed531a4f55b7a30772cb5f21cf8a
+    5,239573aae4710e1c1d09ffdf9de67a031176318a5caa901897183014776d607a
+
+The liabilities output can now be made public, the nonces can be disclosed to each user individually. The output of `generation_liabilities.py` contains one line per tree node. The tree is published root first, then left child, then right
+child, then one level down starting with left-most child in that row, etc.
+
+
+NOTE: child node values are commmitted to individually to avoid [specific attacks](https://eprint.iacr.org/2018/1139.pdf) the prover could engage in on the original scheme proposed.
+
+### Validation tool
+
 Validation requires Python 3.7 and above.
 
-Effectively BitMEX runs this internally, using our account balances to create the proof file.
-The tool maintains a nonce for each user in `nonces.txt`, stable between proofs.
+We will run as user `2` above, who has been communicated the account nonce `b88860add96111d84d38a500266df715158f91375d9aaa98aa58356f9a872412` above.
 
-```
-$ # Run by BitMEX to compile the merkle proofs and generated nonces for decrypting leaves
-$ python3 generate_liabilities.py --liabilities liabilities-100-20210225D150000099012000.csv --blockheight 100 > liabilities-100-proof.dat
-$ cat nonces.txt
-...
-350078,b88860add96111d84d38a500266df715158f91375d9aaa98aa58356f9a872412
-350082,38de14dcd1425739ddbe2bcf7505c1bac602fd185727dc7f2fa9ddaeff9a36c9
-350084,5def3d7f4394d7f8b462e28d7b0e99554ee023d92c4e587ebd7d0cfb09d7cc05
-...
-```
+    % python3 validate_liabilities.py --proof liabilities-100-proof.csv --account 2 --account_nonce b88860add96111d84d38a500266df715158f91375d9aaa98aa58356f9a872412
+    Number of leaf nodes to scan 8
+    Hash match for leaf 3 claims 1,294 sats
+    Hash match for leaf 5 claims 1,706 sats
+    Validated 3,000 satoshis for account 2, total liabilities 4,000,004,000
 
-We then write the output file (`liabilities-100-proof.dat`) to the URLs given above:
-
-```
-$ # Run by BitMEX users to validate their own branches of the merkle proof
-$ python3 validate_liabilities.py --proof liabilities-100-proof.dat --account 350082 --nonce 38de14dcd1425739ddbe2bcf7505c1bac602fd185727dc7f2fa9ddaeff9a36c9
-Number of leaf nodes to scan 524288
-Hash match for leaf 120974 claims 104,741 sats
-Hash match for leaf 483170 claims 895,263 sats
-Validated 1,000,004 in satoshis for account 350082, total liabilities 20,361,487,836,260
-
-# More verbose modes are also available, see help for details: --print-tree --print-proof-csv
-
-```
+More verbose modes are also available, see help for details: --print-tree --print-proof-csv
 
 The input file assumes the following CSV header: `account, amount`. Each line corresponds to a leaf in the Merkle sum tree.
 Accounts are non-negative integers, serialized as 8-byte unsigned integers. Leaves are shuffled prior to tree generation
@@ -102,32 +171,7 @@ as well as balance splitting to ensure the privacy of our users. The user runs `
 the user-specific `--account` and `--nonce` fields that are served to them through their web account or BitMEX API.
 This will decode the amount of value under their account and allow the user to check the root hash against other
 users' version of the hash. Note that nonce is assumed to be a 32-byte hex encoded string, unique per proof.
-The output of the generation tool contains one line per tree node. The tree is published root first, then left child, then right
-child, then one level down starting with left-most child in that row, etc.
 
-### Design of Liabilities
-
-Each user has their own account number internally within BitMEX. Each account is issued a single 32-byte nonce for the lifetime
-of that account, with sub-nonces being derived per proof.  The merkle sum proof is a modified version of the [Maxwell Proof of Liabilities](https://bitcointalk.org/index.php?topic=595180.0) scheme,
-where a Merkle Tree is used to prove to individual users that their liabilities are included in a published total liabilities number.
-
-First, the leaves of the tree are calculated, all input values being serialized as 8-byte unsigned values, and leaf_value standing for satoshis:
-```
-sub_nonce = sha256(account_nonce||block_height,account_number)
-leaf_digest = HMAC256(sub_nonce, leaf_value||leaf_index)
-```
-
-The account number, sub-nonce, and block height are all static per proof file. Block height ensures that every single proof "shuffles" the account nonce.
-Leaf index allows the proof to include "sharded" account balances, where each user has multiple leaves, without revealing any patterns to third parties.
-
-These leaves are then shuffled, and a binary tree constructed, node by node, again all 8-byte unsigned values, and values as satoshis:
-```
-node_digest = sha256(left_digest||left_value||right_digest||right_value)
-```
-
-Where left_value and right_value are the sums of those nodes' children's values as well. Therefore the root of the tree commits to the sum total of all liabilities of all the leaves!
-
-NOTE: child node values are commmitted to individually to avoid [specific attacks](https://eprint.iacr.org/2018/1139.pdf) the prover could engage in on the original scheme proposed.
 
 # Issues?
 
