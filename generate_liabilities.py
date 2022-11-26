@@ -95,6 +95,9 @@ def generate_liabilities_tree(liabilities, user_nonces, block_height, min_split=
                 val2 = liability[1]-val1
                 stretched_liabilities.append([liability[0], val1])
                 stretched_liabilities.append([liability[0], val2])
+            elif liability[1] == 0:
+                # 0-value liabilities are no liabilities at all
+                continue
             else:
                 stretched_liabilities.append(liability)
 
