@@ -71,11 +71,11 @@ def parse_liabilities(liabilities_text):
         liabilities.append([int(liability[0]), int(liability[1])])
     return liabilities
 
-def generate_liabilities_tree(liabilities, user_nonces, block_height):
+def generate_liabilities_tree(liabilities, user_nonces, block_height, min_split=2):
 
     # Find the next power of two leaf size that gives reasonable amount of value anonomity
     # We want every leaf to be split at least once!
-    stuffed_size = len(liabilities)*2
+    stuffed_size = len(liabilities)*min_split
     final_tree_height = math.ceil(math.log(stuffed_size, 2))
     final_leaf_number = 2**final_tree_height
 
@@ -148,9 +148,16 @@ if __name__ == "__main__":
         "--blockheight",
         help="Block height of the csv snapshot(used to mix the leaves)",
         required=True,
+        type=int,
+    )
+    parser.add_argument(
+        "--min-split",
+        help="minimum number of splits for each leaf",
+        default=2,
+        type=int,
     )
     args = parser.parse_args()
     liabilities_text = load_liabilities_file(args.liabilities)
     liabilities = parse_liabilities(liabilities_text)
     user_nonces = maybe_generate_nonces("nonces.txt", liabilities)
-    print(generate_liabilities_tree(liabilities, user_nonces, int(args.blockheight)))
+    print(generate_liabilities_tree(liabilities, user_nonces, args.blockheight, min_split=args.min_split))

@@ -145,7 +145,7 @@ Continuing our sample dataset:
     4,b4fb0f6cb39e1b47e159996d54121309d92fed531a4f55b7a30772cb5f21cf8a
     5,239573aae4710e1c1d09ffdf9de67a031176318a5caa901897183014776d607a
 
-The liabilities output can now be made public, the nonces can be disclosed to each user individually. The output of `generation_liabilities.py` contains one line per tree node. The tree is published root first, then left child, then right
+The liabilities output can now be made public, the nonces can be disclosed to each user individually. The output of `generate_liabilities.py` contains one line per tree node. The tree is published root first, then left child, then right
 child, then one level down starting with left-most child in that row, etc.
 
 
@@ -163,7 +163,7 @@ We will run as user `2` above, who has been communicated the account nonce `b888
     Hash match for leaf 5 claims 1,706 sats
     Validated 3,000 satoshis for account 2, total liabilities 4,000,004,000
 
-More verbose modes are also available, see help for details: --print-tree --print-proof-csv
+More verbose modes are also available, see help for details: `--print-tree` and `--print-proof-csv`
 
 The input file assumes the following CSV header: `account, amount`. Each line corresponds to a leaf in the Merkle sum tree.
 Accounts are non-negative integers, serialized as 8-byte unsigned integers. Leaves are shuffled prior to tree generation
@@ -176,5 +176,7 @@ users' version of the hash. Note that nonce is assumed to be a 32-byte hex encod
 # Issues?
 
 The output's "total liabilities" value can be directly compared against the proved reserves value to give assurances about
-solvency. If a user is unable to prove their subbalance's inclusion in this total value, please contact us at https://www.bitmex.com/contact for resolution.
+solvency.
+
+If a user is unable to prove their balance's inclusion in this total value, please contact us at https://www.bitmex.com/contact for assistance.
 
