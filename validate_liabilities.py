@@ -124,8 +124,8 @@ def validate_liabilities(block_height, tree, account, nonce, account_nonce, args
 
         summed_value += tree[0][leaf_index].sats
 
-    print("Validated {:,} in satoshis for account {}, total liabilities {:,}".format(summed_value, account, tree[-1][0].sats))
-
+    print("Validated {:,} sats for account {}".format(summed_value, account))
+    print("Total liabilities {:,} sats, root hash {}".format(tree[-1][0].sats, tree[-1][0].hash.hex()))
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
