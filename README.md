@@ -101,7 +101,7 @@ For convience we number liabilities based on the prevailing bitcoin block height
 
     sub_nonce = sha256(account_nonce || block_height || account_number)
 
-Next all user balances are split ("blinded") into multiple parts, with the ratio of the split determined by a random number generator, thereby information about the distribution of account balances, and active users over time on the participating platform is no longer revealed. The parts are shuffled into a random order.
+Next all user balances are split ("blinded") into multiple parts, with the ratio of the split determined by a random number generator, thereby information about the distribution of account balances, and active users over time on the participating platform is no longer revealed. 0-value liabilities are dropped as they are not liabilities at all. The parts are shuffled into a random order.
 
 Next the liability chunks are arranged as the leaves of a merkle sum proof, a modified version of the [Maxwell Proof of Liabilities](https://bitcointalk.org/index.php?topic=595180.0) scheme.
 
@@ -122,21 +122,21 @@ Continuing our sample dataset:
 
     % python3 generate_liabilities.py --liabilities liabilities-100-20210225D150000099012000.csv --blockheight 100 | tee liabilities-100-proof.csv
     block_height:100
-    85b0a83970a74a6ad0ee5d4bec5d3afe0048d18b8342e31e2d3a45e0f17879c7,4000004000
-    4e6661db50e4ec1c42204c471c0a6fa2a8749127368f3358c340752208b160c9,963611993
-    128b3b2bd3f6bde35d5ac2ba0a37def53fad7a607e6cdd76ee4ad39472b44447,3036392007
-    448e972f7919df255c250b61d6ae1ea165f94cae229f3f610359ae0e2e63acb9,963610699
-    bfa7eddb8a0a00f8e1eda939c41eaba51f9555b32d45b6f5828bca3950eea31f,1294
-    51fb2bcf79c0439694c391960cfc0838db369b6fb2687c1fd4636476a2c34ca7,2039
-    9649f6034051c9c81e3d246ae90473da35a8c02b4321c1b61436b75da139cf53,3036389968
-    69c492be8d5b1f3cc507047460cabc116495e03fa6c76a7767655a94c2b9ae4f,963610032
-    acb9b9fb9ae63ae09927dac870fa203d0113dade58f20a9855193b121d3ed035,667
-    cbcdfae2f947e2b5b7dc2268f0f02f230867b77a0742940af16eff46f457a10e,0
-    003c7fc49a6a476894dd6edfca066d5e3fe01cc63906214134fb6e2ee06a7d83,1294
-    4c28a5dda0bb0dc42af1d942ea12b1f5fe1e3a22049de33166262c724363df63,333
-    2150701b63061ebffa09aa4a0fb239fd59143e6f7ba7cdec3714412d09b97db3,1706
-    f7c28544e2beb1abe170ca4d1aa177236f8e43383c2e83420bcbe8375aa4ba9b,1543636957
-    943f858e804d09d241b05c9d063030da551ca4bde5133b303c8f23a4b76a5fde,1492753011
+    ceb08dfd693430ece544df853a989684056c0800088d61bfcc38c0d16cc1e1c7,4000004000
+    449b24ad1789df614e1de58a924a312335cf2bb8d9830c89b113d74354bcea78,2352507629
+    6ad03b1284e87e672cb57fcf3d97e64ef1eff6c648679c33e433d4b2b0636c33,1647496371
+    e54b0f6e0ec5845eed44f1b9e58d202ac8468b3fcb0c2d4961846d1d6cdff7b1,1076759806
+    b9bee9ed5991578f3674622172d4d14397e7eff8eb8fc19cb20c9421dab17c84,1275747823
+    dbe039f6addaf13a7a712d34a946f0ffb1106884a2ca978bc8c34ea4fb262938,1647493311
+    9640e3293a500a40638c22b51ddebc9b6046b9d9bda17b832debee81d57e9fb6,3060
+    48e433bb032ad89fc9ff52ab74c0a6af295fe41be6a1300fe8b02febbce535fc,450471613
+    bcb09e9ed1450e39e1b5ebb44c299d9d40408026f388fd8b57117dacf8b5f335,626288193
+    8701c3bc3bbc1e6e7699129f812ea915eff8fb4bb4d644189580a887d24741c5,530
+    b7cae0de2ac83de99b0e02f19d2b420dd07ad3e93e0b360119b4c98b63e98b02,1275747293
+    e078517622f1f679851e1d5e61a9d3f44589e5c750b541714154ea028f12e6f7,1647492901
+    b3ca4573d1c7b56c4834bff4f11804ec82a39fa47de3c45cccfee2ef49c1d05e,410
+    31e1e8af2893f647a4c933454b99170799f5591895814eb52e208280cef132eb,590
+    20f222b2a4e1ebc3ba36e2907095604cf982a919d9b16ac2083d9881131e02d5,2470
 
     $ cat nonces.txt
     2,b88860add96111d84d38a500266df715158f91375d9aaa98aa58356f9a872412

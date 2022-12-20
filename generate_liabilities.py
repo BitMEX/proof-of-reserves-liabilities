@@ -71,7 +71,10 @@ def parse_liabilities(liabilities_text):
         liabilities.append([int(liability[0]), int(liability[1])])
     return liabilities
 
-def generate_liabilities_tree(liabilities, user_nonces, block_height, min_split=2):
+
+def generate_liabilities_tree(
+    liabilities, user_nonces, block_height, min_split=2, exclude_zeros=True
+):
 
     # Find the next power of two leaf size that gives reasonable amount of value anonomity
     # We want every leaf to be split at least once!
@@ -91,10 +94,15 @@ def generate_liabilities_tree(liabilities, user_nonces, block_height, min_split=
             # If leaf is value 1, it cannot be meaningfully split
             if stretched_liabilities_len < final_leaf_number and liability[1] > 1:
                 stretched_liabilities_len += 1
-                val1 = random.SystemRandom().randint(1,liability[1]-1) # Split should always leave at least 1 sat on both leaves
-                val2 = liability[1]-val1
+                # Split should always leave at least 1 sat on both leaves
+                val1 = random.SystemRandom().randint(1, liability[1] - 1)
+                val2 = liability[1] - val1
                 stretched_liabilities.append([liability[0], val1])
                 stretched_liabilities.append([liability[0], val2])
+            elif liability[1] == 0 and exclude_zeros:
+                # 0-value liabilities can be filtered out and dealt with by not matching
+                # any leaves
+                continue
             else:
                 stretched_liabilities.append(liability)
 
