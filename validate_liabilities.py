@@ -68,6 +68,7 @@ def validate_liabilities(block_height, tree, account, nonce, account_nonce, args
         nonce_bytes = bytearray.fromhex(nonce)
     elif account_nonce:
         nonce_bytes = gen_sub_nonce(account_nonce, block_height, account)
+        print(f"Snapshot nonce for account {account} at height {block_height} is {nonce_bytes.hex()}")
 
     # Scan through leaves looking for matches
     summed_value = 0
