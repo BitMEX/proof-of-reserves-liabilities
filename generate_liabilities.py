@@ -128,12 +128,12 @@ def generate_liabilities_tree(liabilities, user_nonces, block_height, min_split=
     # block_height
     # <node_hash>,<node_value> where tree is published root to leaves line by line
 
-    tree_string = "block_height:{}\n".format(block_height)
+    tree_strings = ["block_height:{}".format(block_height)]
 
     for row in reversed(tree):
         for node in row:
-            tree_string += "{},{}\n".format(node[0].hex(), node[1])
-    return tree_string.strip()
+            tree_strings.append("{},{}".format(node[0].hex(), node[1]))
+    return "\n".join(tree_strings)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
