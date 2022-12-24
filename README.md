@@ -1,4 +1,4 @@
-# Tool Suite for Generating and Validating Proofs of Reserves(PoR) and Liabilities(PoL)
+# Tools for Generating and Validating Proofs of Reserves (PoR) and Liabilities (PoL)
 
 These tools allow you to independantly verify exchange solvency by auditing that stated reserves exist and checking they exceed the known liabilities of the exchange to users.
 
@@ -9,11 +9,11 @@ BitMEX regularly publish our reserves and liabilities here:
 
 As a user you can verify that your own liability, plus that of the insurance fund is included.
 
-A Walkthrough of the tools and methodology is available at:
+A walkthrough of the tools is available by [BitMEX Research](https://blog.bitmex.com/research/):
 
-* BitMEX Research, 12 Aug 2021 [Fixing The Privacy Gap In Proof Of Liability Protocols](https://blog.bitmex.com/addressing-the-privacy-gap-in-proof-of-liability-protocols/)
-* BitMEX Research, 13 Aug 2021 [Proof of Reserves & Liabilities – BitMEX Demonstration](https://blog.bitmex.com/proof-of-reserves-liabilities-bitmex-demonstration/)
-* BitMEX Research, 9 Nov 2022 [BitMEX Provides Snapshot Update to Bitcoin Proof of Reserves & Proof of Liabilities](https://blog.bitmex.com/bitmex-provides-snapshot-update-to-proof-of-reserves-proof-of-liabilities/)
+* 12 Aug 2021 [Fixing The Privacy Gap In Proof Of Liability Protocols](https://blog.bitmex.com/addressing-the-privacy-gap-in-proof-of-liability-protocols/)
+* 13 Aug 2021 [Proof of Reserves & Liabilities – BitMEX Demonstration](https://blog.bitmex.com/proof-of-reserves-liabilities-bitmex-demonstration/)
+* 9 Nov 2022 [BitMEX Provides Snapshot Update to Bitcoin Proof of Reserves & Proof of Liabilities](https://blog.bitmex.com/bitmex-provides-snapshot-update-to-proof-of-reserves-proof-of-liabilities/)
 
 
 ### Installation
@@ -28,7 +28,9 @@ $ pip3 install -r requirements.txt
 
 To validate reserves you will require a running bitcoin daemon, with a reachable RPC server, dedicated to this task.
 
-## Reserves
+No additional services are required to validate liabilities.
+
+# Reserves
 
 This tool will take a proof file containing the balances of all BitMEX addresses, plus the locking scripts used to derive the address from exchange keys. It takes control of a Bitcoin Core (bitcoind) instance, rewinds the bitcoin chain state to that of the prooof, then verifies the claimed Bitcoin is indeed under the control of the given keys at that block height. You must validate yourself that the public keys belong to BitMEX!
 
@@ -75,11 +77,11 @@ Note that the RPC server port default is different for different networks: 8332(
 Note that Bitcoin Core supports 'pruning' block undo data beyond a certain depth. It is highly recommended
 that this tool is run against an unpruned bitcoind, otherwise the script may fail if it tries to rewind deeper than pruning allows.
 
-## Liabilities
+# Liabilities
 
-We provide a tool in two parts, firstly to generate and secondly to verify a custom implementation of [Maxwell Proof of Liabilities](https://eprint.iacr.org/2018/1139.pdf) using a novel blinding approach to make user balances pseudonymous.
+We provide a tool in two parts, firstly to generate and secondly to verify a custom implementation of [Maxwell Proof of Liabilities](https://eprint.iacr.org/2018/1139.pdf) using a novel blinding approach to make user balances pseudonymous. If you are looking to verify exchange data, [skip ahead to validation](#validation).
 
-### Creation of Liabilities
+## Creation of Liabilities
 
 The starting point is a list of the liabilitity to each user, keyed by an account number:
 
@@ -151,7 +153,7 @@ child, then one level down starting with left-most child in that row, etc.
 
 NOTE: child node values are commmitted to individually to avoid [specific attacks](https://eprint.iacr.org/2018/1139.pdf) the prover could engage in on the original scheme proposed.
 
-### Validation tool
+## Validation
 
 Validation requires Python 3.7 and above.
 
@@ -178,5 +180,4 @@ users' version of the hash. Note that nonce is assumed to be a 32-byte hex encod
 The output's "total liabilities" value can be directly compared against the proved reserves value to give assurances about
 solvency.
 
-If a user is unable to prove their balance's inclusion in this total value, please contact us at https://www.bitmex.com/contact for assistance.
-
+If a user is unable to prove their balance's inclusion, please contact us at https://www.bitmex.com/contact for assistance.
