@@ -5,10 +5,11 @@ RUN export DEBIAN_FRONTEND=noninteractive; export TZ=America/New_York; \
     curl git-all wget python-apt -y
 
 RUN mkdir /app
+ARG BITCOINVER=0.21.0
 RUN cd /app && \
-    wget -q https://bitcoincore.org/bin/bitcoin-core-0.21.0/bitcoin-0.21.0-x86_64-linux-gnu.tar.gz && \
-    tar -xf bitcoin-0.21.0-x86_64-linux-gnu.tar.gz && \
-    cp bitcoin-0.21.0/bin/* .
+    wget -q https://bitcoincore.org/bin/bitcoin-core-${BITCOINVER}/bitcoin-${BITCOINVER}-x86_64-linux-gnu.tar.gz && \
+    tar -xf bitcoin-${BITCOINVER}-x86_64-linux-gnu.tar.gz && \
+    cp bitcoin-${BITCOINVER}/bin/* .
 COPY requirements.txt /app/requirements.txt
 RUN pip3 install -r /app/requirements.txt
 COPY validate_reserves.py /app/validate_reserves.py

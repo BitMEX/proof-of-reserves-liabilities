@@ -53,9 +53,6 @@ def compile_proofs(rpc, proof):
     if proof is None:
         raise Exception("Unable to load proof file")
 
-    if rpc_request(rpc, "getnetworkinfo", [])["version"] < 210000:
-        raise Exception("You need to run Bitcoin Core v0.21 or higher!")
-
     info = rpc_request(rpc, "getblockchaininfo", [])
     # Re-org failure is really odd and unclear to the user when pruning
     # so we're not bothering to support this.
@@ -266,7 +263,7 @@ def validate_proofs(rpc, proof_data):
         if not res["success"]:
             raise Exception("Scan results not successful???")
 
-        if res["bestblock"] != block_hash:
+        if rpc['version'] >= 210000 and res["bestblock"] != block_hash:
             raise Exception("We retrieved snapshot from wrong block? {} vs {}".format(res["bestblock"], block_hash))
 
         proven_amount += res["total_amount"]
@@ -314,6 +311,9 @@ if __name__ == "__main__":
     logging.getLogger().setLevel(logging.INFO)
 
     ensure_bitcoind(rpc)
+    rpc['version'] = rpc_request(rpc, "getnetworkinfo", [])["version"]
+    if rpc['version'] < 180100:
+        raise Exception("You need to run Bitcoin Core v0.18.1 or higher!")
 
     if args.reconsider:
         logging.info("Reconsidering blocks and exiting.")
