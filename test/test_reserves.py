@@ -73,7 +73,9 @@ class TestReserves(unittest.TestCase):
                 print("2")
                 net_info = rpc_request(self.rpc, "getblockchaininfo", [], 60)
                 print("3")
-                rpc_request(self.rpc, "createwallet", ["defaul"], 60)
+                version = rpc_request(self.rpc, "getnetworkinfo", [], 60)['version']
+                if version>=210000:
+                    rpc_request(self.rpc, "createwallet", ["default"], 60)
                 print("4")
                 assert net_info["chain"] == "regtest"
                 break
