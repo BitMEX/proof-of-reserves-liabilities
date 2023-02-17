@@ -53,9 +53,6 @@ def compile_proofs(rpc, proof):
     if proof is None:
         raise Exception("Unable to load proof file")
 
-    if rpc_request(rpc, "getnetworkinfo", [])["version"] < 210000:
-        raise Exception("You need to run Bitcoin Core v0.21 or higher!")
-
     info = rpc_request(rpc, "getblockchaininfo", [])
     # Re-org failure is really odd and unclear to the user when pruning
     # so we're not bothering to support this.
@@ -266,7 +263,7 @@ def validate_proofs(rpc, proof_data):
         if not res["success"]:
             raise Exception("Scan results not successful???")
 
-        if res["bestblock"] != block_hash:
+        if rpc['version'] >= 210000 and res["bestblock"] != block_hash:
             raise Exception("We retrieved snapshot from wrong block? {} vs {}".format(res["bestblock"], block_hash))
 
         proven_amount += res["total_amount"]
@@ -279,11 +276,7 @@ def validate_proofs(rpc, proof_data):
             proof_data["height"], block_hash, proven_amount
         )
     )
-
-    with open(block_hash+"_result.json", 'w') as f:
-        json.dump({"amount_proven": proven_amount}, f)
-
-    logging.info("IMPORTANT! Call this script with --reconsider to bring your bitcoin node back to tip when satisfied with the results")
+    return {"amount_proven": proven_amount, "height": proof_data["height"], "block": block_hash}
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -302,18 +295,25 @@ if __name__ == "__main__":
     parser.add_argument(
         "--rpcauth", help="<username>:<password> for RPC connection", required=True
     )
-    parser.add_argument("--rpchostDANGERDANGER", help="Hostname for RPC connection. Beware of exposing your bitcoind to external machines!", required=False, default="127.0.0.1")
+    parser.add_argument("--rpchost", help="Hostname for RPC connection", required=False, default="127.0.0.1")
     parser.add_argument("--rpcport", help="Port for RPC connection", required=True)
     parser.add_argument(
         "--verbose", "-v", help="Prints more information about scanning results"
     )
+    parser.add_argument(
+        "--result-file",
+        help="Write amount verified to a file (json format)",
+    )
     args = parser.parse_args()
 
-    rpc = {"user": args.rpcauth.split(":")[0], "password": args.rpcauth.split(":")[1], "host": args.rpchostDANGERDANGER, "port": args.rpcport}
+    rpc = {"user": args.rpcauth.split(":")[0], "password": args.rpcauth.split(":")[1], "host": args.rpchost, "port": args.rpcport}
 
     logging.getLogger().setLevel(logging.INFO)
 
     ensure_bitcoind(rpc)
+    rpc['version'] = rpc_request(rpc, "getnetworkinfo", [])["version"]
+    if rpc['version'] < 180100:
+        raise Exception("You need to run Bitcoin Core v0.18.1 or higher!")
 
     if args.reconsider:
         logging.info("Reconsidering blocks and exiting.")
@@ -325,5 +325,11 @@ if __name__ == "__main__":
                 pass
     elif args.proof is not None:
         compiled_proof = compile_proofs(rpc, args.proof)
-        validate_proofs(rpc, compiled_proof)
+        validated = validate_proofs(rpc, compiled_proof)
+        if args.result_file is not None:
+            logging.info('Writing results to {}'.format(args.result_file))
+            with open(args.result_file, 'w') as f:
+                json.dump(validated, f)
+
+        logging.info("IMPORTANT! Call this script with --reconsider to bring your bitcoin node back to tip when satisfied with the results")
 

@@ -8,7 +8,9 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
-
+    strategy:
+      matrix:
+        bitcoin-version: ['BITCOINVER=0.21.0', 'BITCOINVER=0.19.1', 'BITCOINVER=24.0']
     steps:
     - name: Checkout repo
       uses: actions/checkout@v2
@@ -22,3 +24,4 @@ jobs:
         file: Dockerfile
         push: false
         tags: ${{ steps.prep.outputs.tagged_image }}
+        build-args: ${{ matrix.bitcoin-version }}

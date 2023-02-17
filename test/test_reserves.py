@@ -73,7 +73,9 @@ class TestReserves(unittest.TestCase):
                 print("2")
                 net_info = rpc_request(self.rpc, "getblockchaininfo", [], 60)
                 print("3")
-                rpc_request(self.rpc, "createwallet", ["defaul"], 60)
+                version = rpc_request(self.rpc, "getnetworkinfo", [], 60)['version']
+                if version>=210000:
+                    rpc_request(self.rpc, "createwallet", ["default"], 60)
                 print("4")
                 assert net_info["chain"] == "regtest"
                 break
@@ -136,7 +138,7 @@ class TestReserves(unittest.TestCase):
             yaml.dump(proof, f)
 
         # Run validator tool against the proof file
-        run_args = ["python3", "/app/validate_reserves.py", "--rpcauth", "user:password", "--rpchostDANGERDANGER", "127.0.0.1", "--rpcport", "18443", "--proof", "test.proof"]
+        run_args = ["python3", "/app/validate_reserves.py", "--rpcauth", "user:password", "--rpchost", "127.0.0.1", "--rpcport", "18443", "--proof", "test.proof", "--result-file", proof_hash+"_result.json"]
         output = subprocess.check_output(run_args).decode('utf-8')
 
         # Check output file's value
@@ -147,7 +149,7 @@ class TestReserves(unittest.TestCase):
         # Check that blockheight looks right
         self.assertEqual(rpc_request(self.rpc, "getblockcount", []), proof_height)
 
-        # --reconsider call to make sure that it resets blockheight of the node, don't use rpchostDANGERDANGER to check default
+        # --reconsider call to make sure that it resets blockheight of the node, don't use rpchost to check default
         run_args = ["python3", "/app/validate_reserves.py", "--rpcauth", "user:password", "--rpcport", "18443", "--reconsider"]
         output = subprocess.check_output(run_args).decode('utf-8')
         while rpc_request(self.rpc, "getblockcount", []) != total_height:
