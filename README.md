@@ -163,7 +163,8 @@ We will run as user `2` above, who has been communicated the account nonce `b888
     Number of leaf nodes to scan 8
     Hash match for leaf 3 claims 1,294 sats
     Hash match for leaf 5 claims 1,706 sats
-    Validated 3,000 satoshis for account 2, total liabilities 4,000,004,000
+    Validated 3,000 sats for account 2
+    Total liabilities 4,000,004,000 sats, root hash 85b0a83970a74a6ad0ee5d4bec5d3afe0048d18b8342e31e2d3a45e0f17879c7
 
 More verbose modes are also available, see help for details: `--print-tree` and `--print-proof-csv`
 
