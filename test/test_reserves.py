@@ -157,5 +157,18 @@ class TestReserves(unittest.TestCase):
 
         self.assertEqual(rpc_request(self.rpc, "getbestblockhash", []), last_blocks[-1])
 
+        # check rejection of proofs containing duplicate addresses/scripts
+        proof["address"].append(proof["address"][0])
+
+        with open("testbad.proof", "w") as f:
+            yaml.dump(proof, f)
+
+        # Run validator tool against the proof file
+        run_args = ["python3", "/app/validate_reserves.py", "--rpcauth", "user:password", "--rpchost", "127.0.0.1", "--rpcport", "18443", "--proof", "testbad.proof", "--result-file", proof_hash+"_result.json"]
+        with self.assertRaises(subprocess.CalledProcessError) as context:
+            subprocess.check_output(run_args, stderr=subprocess.STDOUT)
+        self.assertEqual(context.exception.returncode, 1)
+        self.assertIn("Duplicate address", context.exception.output.decode('utf-8'))
+
 if __name__ == "__main__":
     unittest.main()

@@ -2,6 +2,7 @@
 
 import argparse
 import copy
+from collections import Counter
 import json
 import logging
 import math
@@ -9,6 +10,7 @@ import requests
 from requests.auth import _basic_auth_str
 import time
 import yaml
+
 
 def rpc_request(rpc, method, params, timeout=5):
     headers = {
@@ -100,8 +102,18 @@ def compile_proofs(rpc, proof):
         logging.info("Multisig {}/{} keys being proven against: {}".format(m_sigs, n_keys, keys))
         logging.info("or addresses derived from pubkey: {}".format(xpubs))
 
+        addrs = proof_data["address"]
+
+        dupe_addresses = [k for k,c in Counter([a['addr'] for a in addrs]).items() if c>1]
+        if dupe_addresses:
+            raise ValueError("Duplicate address: {}".format(dupe_addresses))
+
+        dupe_scripts = [k for k,c in Counter([a['script'] for a in addrs]).items() if c>1]
+        if dupe_scripts:
+            raise ValueError("Duplicate scripts: {}".format(dupe_scripts))
+
         # Lastly, addresses
-        for addr_info in proof_data["address"]:
+        for addr_info in addrs:
 
             if addr_info["addr_type"] == "unspendable":
                 logging.warning("Address {} is marked as unspendable, skipping this value".format(addr_info["addr"]))
