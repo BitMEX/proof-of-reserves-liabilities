@@ -26,7 +26,10 @@ def rpc_request(rpc, method, params, timeout=5):
     encoded_data = json.dumps(data).encode("utf-8")
 
     response = requests.post(
-        "http://{}:{}".format(rpc["host"], rpc["port"]), data=encoded_data, headers=headers, timeout=timeout
+        "http://{}:{}".format(rpc["host"], rpc["port"]),
+        data=encoded_data,
+        headers=headers,
+        timeout=timeout,
     )
     try:
         result = json.loads(response.content)
@@ -36,6 +39,7 @@ def rpc_request(rpc, method, params, timeout=5):
             raise Exception(json.dumps(result["error"]))
     except Exception as e:
         raise Exception("RPC call failed. Raw return output: {}".format(response))
+
 
 def ensure_bitcoind(rpc):
     # Test connection with bitcoind rpc
@@ -51,6 +55,7 @@ def ensure_bitcoind(rpc):
                 )
             )
 
+
 def compile_proofs(rpc, proof):
     if proof is None:
         raise Exception("Unable to load proof file")
@@ -59,7 +64,9 @@ def compile_proofs(rpc, proof):
     # Re-org failure is really odd and unclear to the user when pruning
     # so we're not bothering to support this.
     if info["pruned"]:
-        logging.warning("Proof of Reserves on pruned nodes not well-supported. Node can get stuck reorging past pruned blocks.")
+        logging.warning(
+            "Proof of Reserves on pruned nodes not well-supported. Node can get stuck reorging past pruned blocks."
+        )
 
     network = info["chain"]
 
@@ -69,8 +76,9 @@ def compile_proofs(rpc, proof):
     addresses = []
 
     with open(proof) as proof_file:
-
-        logging.info("Loading yaml proof file into memory, this may take a few minutes.")
+        logging.info(
+            "Loading yaml proof file into memory, this may take a few minutes."
+        )
         proof_data = yaml.safe_load(proof_file)
         logging.info("Done.")
 
@@ -78,10 +86,16 @@ def compile_proofs(rpc, proof):
         block_count = rpc_request(rpc, "getblockcount", [])
 
         if network != proof_data["chain"]:
-            raise Exception("Network mismatch: bitcoind:{} vs proof:{}".format(network, proof_data["chain"]))
+            raise Exception(
+                "Network mismatch: bitcoind:{} vs proof:{}".format(
+                    network, proof_data["chain"]
+                )
+            )
 
         if block_count < proof_data["height"]:
-            raise Exception("Chain height locally is behind the claimed height in the proof. Bailing.")
+            raise Exception(
+                "Chain height locally is behind the claimed height in the proof. Bailing."
+            )
 
         block_hash = rpc_request(rpc, "getblockhash", [proof_data["height"]])
 
@@ -89,7 +103,9 @@ def compile_proofs(rpc, proof):
             rpc_request(rpc, "getblock", [block_hash])
         except Exception as e:
             if "pruned":
-                raise Exception("Looks like your node has pruned beyond the reserve snapshot; bailing.")
+                raise Exception(
+                    "Looks like your node has pruned beyond the reserve snapshot; bailing."
+                )
             else:
                 raise Exception("Fatal: Unable to retrieve block at snapshot height")
 
@@ -99,37 +115,45 @@ def compile_proofs(rpc, proof):
         n_keys = proof_data["claim"]["n"]
         keys = proof_data["keys"]
         xpubs = proof_data.get("xpub", [])
-        logging.info("Multisig {}/{} keys being proven against: {}".format(m_sigs, n_keys, keys))
+        logging.info(
+            "Multisig {}/{} keys being proven against: {}".format(m_sigs, n_keys, keys)
+        )
         logging.info("or addresses derived from pubkey: {}".format(xpubs))
 
         addrs = proof_data["address"]
 
-        dupe_addresses = [k for k,c in Counter([a['addr'] for a in addrs]).items() if c>1]
+        dupe_addresses = [
+            k for k, c in Counter([a["addr"] for a in addrs]).items() if c > 1
+        ]
         if dupe_addresses:
             raise ValueError("Duplicate address: {}".format(dupe_addresses))
 
-        dupe_scripts = [k for k,c in Counter([a['script'] for a in addrs]).items() if c>1]
+        dupe_scripts = [
+            k for k, c in Counter([a["script"] for a in addrs]).items() if c > 1
+        ]
         if dupe_scripts:
             raise ValueError("Duplicate scripts: {}".format(dupe_scripts))
 
         # Lastly, addresses
         for addr_info in addrs:
-
             if addr_info["addr_type"] == "unspendable":
-                logging.warning("Address {} is marked as unspendable, skipping this value".format(addr_info["addr"]))
+                logging.warning(
+                    "Address {} is marked as unspendable, skipping this value".format(
+                        addr_info["addr"]
+                    )
+                )
                 continue
 
             elif addr_info["addr_type"] in ("sh", "sh_wsh", "wsh"):
-
                 # Each address should have compressed or uncompressed keys in this set
                 pubkeys_left = copy.deepcopy(keys)
 
-                if addr_info["addr_type"] in ("wsh", "sh_wsh"): # Switch to compressed
+                if addr_info["addr_type"] in ("wsh", "sh_wsh"):  # Switch to compressed
                     pubkeys_left = []
                     for key in keys:
                         # Trying "both" compressed versions to avoid additional python dependencies
-                        even_key = "02"+key[2:-64]
-                        odd_key = "03"+key[2:-64]
+                        even_key = "02" + key[2:-64]
+                        odd_key = "03" + key[2:-64]
                         if even_key in addr_info["script"]:
                             pubkeys_left.append(even_key)
                         elif odd_key in addr_info["script"]:
@@ -141,22 +165,28 @@ def compile_proofs(rpc, proof):
                 assert len(pubkeys_left) == n_keys - 1
 
                 # Next, we make sure the script is a multisig template
-                pubkey_len = 33*2 if addr_info["addr_type"] != "sh" else 65*2
-                pubkey_sep = hex(int(pubkey_len/2))[2:]
+                pubkey_len = 33 * 2 if addr_info["addr_type"] != "sh" else 65 * 2
+                pubkey_sep = hex(int(pubkey_len / 2))[2:]
 
                 script = addr_info["script"]
-                if script[:2] != hex(0x50+m_sigs)[2:]:
-                    raise Exception("Address script doesn't match multisig: {}".format(script))
+                if script[:2] != hex(0x50 + m_sigs)[2:]:
+                    raise Exception(
+                        "Address script doesn't match multisig: {}".format(script)
+                    )
                 script = script[2:]
                 found_vanitykey = False
                 wrong_keys = False
                 ordered_pubkeys = []
-                for i in range(len(pubkeys_left)+1):
+                for i in range(len(pubkeys_left) + 1):
                     if script[:2] != pubkey_sep:
-                        raise Exception("Address script doesn't match multisig: {}".format(pubkey_sep))
-                    pubkey = script[2:2+pubkey_len]
+                        raise Exception(
+                            "Address script doesn't match multisig: {}".format(
+                                pubkey_sep
+                            )
+                        )
+                    pubkey = script[2 : 2 + pubkey_len]
                     ordered_pubkeys.append(pubkey)
-                    script = script[2+pubkey_len:]
+                    script = script[2 + pubkey_len :]
                     if pubkey not in pubkeys_left:
                         if found_vanitykey == False:
                             found_vanitykey = True
@@ -168,14 +198,20 @@ def compile_proofs(rpc, proof):
                         pubkeys_left.remove(pubkey)
 
                 if wrong_keys:
-                    logging.warning("Address {} is missing some given keys, skipping these values".format(addr_info["addr"]))
+                    logging.warning(
+                        "Address {} is missing some given keys, skipping these values".format(
+                            addr_info["addr"]
+                        )
+                    )
                     continue
 
                 assert len(pubkeys_left) == 0
                 assert found_vanitykey
 
-                if script != hex(0x50+n_keys)[2:]+"ae":
-                    raise Exception("Address script doesn't match multisig: {}".format(script))
+                if script != hex(0x50 + n_keys)[2:] + "ae":
+                    raise Exception(
+                        "Address script doesn't match multisig: {}".format(script)
+                    )
 
                 # Lastly, construct the descriptor for querying
                 ordered_join = ",".join(ordered_pubkeys)
@@ -193,14 +229,20 @@ def compile_proofs(rpc, proof):
                 assert xpubs[0] in addr_info["script"]
                 descriptor = addr_info["script"]
             else:
-                raise Exception("Unknown address type {}".format(addr_info["addr_type"]))
+                raise Exception(
+                    "Unknown address type {}".format(addr_info["addr_type"])
+                )
 
-            addresses.append({"desc":descriptor})
+            addresses.append({"desc": descriptor})
 
-        return {"address":addresses, "height": proof_data["height"], "total": proof_data["total"]}
+        return {
+            "address": addresses,
+            "height": proof_data["height"],
+            "total": proof_data["total"],
+        }
+
 
 def validate_proofs(rpc, proof_data):
-
     if proof_data is None:
         raise Exception("Needs proof arg")
 
@@ -208,9 +250,13 @@ def validate_proofs(rpc, proof_data):
     # Re-org failure is really odd and unclear to the user when pruning
     # so we're not bothering to support this.
     if info["pruned"]:
-        logging.warning("Proof of Reserves on pruned nodes not well-supported. Node can get stuck reorging past pruned blocks.")
+        logging.warning(
+            "Proof of Reserves on pruned nodes not well-supported. Node can get stuck reorging past pruned blocks."
+        )
 
-    logging.info("Bitcoind alive: At block {}".format(rpc_request(rpc, "getblockcount", [])))
+    logging.info(
+        "Bitcoind alive: At block {}".format(rpc_request(rpc, "getblockcount", []))
+    )
 
     descriptors_to_check = []
 
@@ -255,7 +301,10 @@ def validate_proofs(rpc, proof_data):
         )
         logging.info(
             "Blocks to go: {}".format(
-                abs(block_info["height"] - rpc_request(rpc, "getblock", [best_hash], 30)["height"])
+                abs(
+                    block_info["height"]
+                    - rpc_request(rpc, "getblock", [best_hash], 30)["height"]
+                )
             )
         )
         time.sleep(60 * minute_wait)
@@ -263,20 +312,33 @@ def validate_proofs(rpc, proof_data):
 
     # "413 Request Entity Too Large" otherwise
     chunk_size = 60000
-    num_scan_chunks = math.ceil(len(descriptors_to_check)/chunk_size)
+    num_scan_chunks = math.ceil(len(descriptors_to_check) / chunk_size)
     proven_amount = 0
     for i in range(num_scan_chunks):
         now = time.time()
-        logging.info("Scanning chunk {}/{}... this may take a while".format(i+1, num_scan_chunks))
+        logging.info(
+            "Scanning chunk {}/{}... this may take a while".format(
+                i + 1, num_scan_chunks
+            )
+        )
         # Making extremely long timeout for scanning job
-        res = rpc_request(rpc, "scantxoutset", ["start", descriptors_to_check[i*chunk_size:(i+1)*chunk_size]], 60*60)
-        logging.info("Done. Took {} seconds".format(time.time()-now))
+        res = rpc_request(
+            rpc,
+            "scantxoutset",
+            ["start", descriptors_to_check[i * chunk_size : (i + 1) * chunk_size]],
+            60 * 60,
+        )
+        logging.info("Done. Took {} seconds".format(time.time() - now))
 
         if not res["success"]:
             raise Exception("Scan results not successful???")
 
-        if rpc['version'] >= 210000 and res["bestblock"] != block_hash:
-            raise Exception("We retrieved snapshot from wrong block? {} vs {}".format(res["bestblock"], block_hash))
+        if rpc["version"] >= 210000 and res["bestblock"] != block_hash:
+            raise Exception(
+                "We retrieved snapshot from wrong block? {} vs {}".format(
+                    res["bestblock"], block_hash
+                )
+            )
 
         proven_amount += res["total_amount"]
 
@@ -288,7 +350,12 @@ def validate_proofs(rpc, proof_data):
             proof_data["height"], block_hash, proven_amount
         )
     )
-    return {"amount_proven": proven_amount, "height": proof_data["height"], "block": block_hash}
+    return {
+        "amount_proven": proven_amount,
+        "height": proof_data["height"],
+        "block": block_hash,
+    }
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -307,7 +374,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--rpcauth", help="<username>:<password> for RPC connection", required=True
     )
-    parser.add_argument("--rpchost", help="Hostname for RPC connection", required=False, default="127.0.0.1")
+    parser.add_argument(
+        "--rpchost",
+        help="Hostname for RPC connection",
+        required=False,
+        default="127.0.0.1",
+    )
     parser.add_argument("--rpcport", help="Port for RPC connection", required=True)
     parser.add_argument(
         "--verbose", "-v", help="Prints more information about scanning results"
@@ -318,13 +390,18 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    rpc = {"user": args.rpcauth.split(":")[0], "password": args.rpcauth.split(":")[1], "host": args.rpchost, "port": args.rpcport}
+    rpc = {
+        "user": args.rpcauth.split(":")[0],
+        "password": args.rpcauth.split(":")[1],
+        "host": args.rpchost,
+        "port": args.rpcport,
+    }
 
     logging.getLogger().setLevel(logging.INFO)
 
     ensure_bitcoind(rpc)
-    rpc['version'] = rpc_request(rpc, "getnetworkinfo", [])["version"]
-    if rpc['version'] < 180100:
+    rpc["version"] = rpc_request(rpc, "getnetworkinfo", [])["version"]
+    if rpc["version"] < 180100:
         raise Exception("You need to run Bitcoin Core v0.18.1 or higher!")
 
     if args.reconsider:
@@ -339,9 +416,10 @@ if __name__ == "__main__":
         compiled_proof = compile_proofs(rpc, args.proof)
         validated = validate_proofs(rpc, compiled_proof)
         if args.result_file is not None:
-            logging.info('Writing results to {}'.format(args.result_file))
-            with open(args.result_file, 'w') as f:
+            logging.info("Writing results to {}".format(args.result_file))
+            with open(args.result_file, "w") as f:
                 json.dump(validated, f)
 
-        logging.info("IMPORTANT! Call this script with --reconsider to bring your bitcoin node back to tip when satisfied with the results")
-
+        logging.info(
+            "IMPORTANT! Call this script with --reconsider to bring your bitcoin node back to tip when satisfied with the results"
+        )
