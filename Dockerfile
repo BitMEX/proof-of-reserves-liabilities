@@ -10,8 +10,8 @@ RUN cd /app && \
     wget -q https://bitcoincore.org/bin/bitcoin-core-${BITCOINVER}/bitcoin-${BITCOINVER}-x86_64-linux-gnu.tar.gz && \
     tar -xf bitcoin-${BITCOINVER}-x86_64-linux-gnu.tar.gz && \
     cp bitcoin-${BITCOINVER}/bin/* .
-COPY requirements.txt /app/requirements.txt
-RUN pip3 install -r /app/requirements.txt
+COPY requirements.txt requirements.dev.txt /app/
+RUN pip3 install -r /app/requirements.txt -r /app/requirements.dev.txt
 COPY validate_reserves.py /app/validate_reserves.py
 COPY test/test_reserves.py /app/test_reserves.py
 RUN python3 /app/test_reserves.py
@@ -19,3 +19,4 @@ COPY generate_liabilities.py /app/generate_liabilities.py
 COPY validate_liabilities.py /app/validate_liabilities.py
 COPY test/test_liabilities.py /app/test_liabilities.py
 RUN python3.7 /app/test_liabilities.py
+RUN black --check /app/*.py

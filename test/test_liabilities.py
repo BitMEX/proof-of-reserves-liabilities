@@ -26,7 +26,7 @@ class TestLiabilities(unittest.TestCase):
             # We don't expect account collision here in test, all values are serialized as 64-bit uints
             # divide by 8 is to avoid overflow at the root liability
             account_list.append(
-                (random.randrange(2 ** 64), random.randrange((2 ** 64) / 8))
+                (random.randrange(2**64), random.randrange((2**64) / 8))
             )
 
         account_map = dict(account_list)
@@ -37,7 +37,7 @@ class TestLiabilities(unittest.TestCase):
 
         # Put through PoL proof generator
         # any 8 byte number, unique per real proof for privacy
-        block_height = str(random.randrange(2 ** 64))
+        block_height = str(random.randrange(2**64))
         run_args = [
             "python3",
             "/app/generate_liabilities.py",
