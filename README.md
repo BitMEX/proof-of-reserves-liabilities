@@ -1,6 +1,6 @@
 # Tools for Generating and Validating Proofs of Reserves (PoR) and Liabilities (PoL)
 
-These tools allow you to independantly verify exchange solvency by auditing that stated reserves exist and checking they exceed the known liabilities of the exchange to users.
+These tools allow you to independantly verify exchange solvency by auditing that stated reserves exist and checking they exceed the known liabilities of the exchange to users. Use of these tools is subject to the [BitMEX Terms of Service](https://www.bitmex.com/terms).
 
 BitMEX regularly publish our reserves and liabilities here:
 
