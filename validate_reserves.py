@@ -226,8 +226,16 @@ def compile_proofs(rpc, proof):
 
             elif addr_info["addr_type"] in ("wpkh"):
                 # check xpub, then we present descriptor as script
-                assert xpubs[0] in addr_info["script"]
-                descriptor = addr_info["script"]
+                for xp in xpubs:
+                    if xp in addr_info["script"]:
+                        descriptor = addr_info["script"]
+                        break
+                else:
+                    raise Exception(
+                        "None of expected pubkeys found in descriptor {}".format(
+                            addr_info["script"]
+                        )
+                    )
             else:
                 raise Exception(
                     "Unknown address type {}".format(addr_info["addr_type"])
