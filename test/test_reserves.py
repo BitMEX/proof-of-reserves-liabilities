@@ -5,56 +5,53 @@ import json
 import logging
 import os
 import requests
-from requests.auth import _basic_auth_str
 import shutil
 import subprocess
 import time
 import unittest
 import yaml
+from urllib.parse import urlparse
+import functools
 
 
-def rpc_request(rpc, method, params, timeout=5):
-    headers = {
-        "Authorization": _basic_auth_str(rpc["user"], rpc["password"]),
-        "Content-Type": "application/json",
-    }
-    data = {
-        "method": method,
-        "params": params,
-        "jsonrpc": "2.0",
-        "id": 0,
-    }
-    encoded_data = json.dumps(data).encode("utf-8")
+class JsonRPCException(Exception):
+    pass
 
-    response = requests.post(
-        "http://{}:{}".format(rpc["host"], rpc["port"]),
-        data=encoded_data,
-        headers=headers,
-        timeout=timeout,
-    )
-    try:
-        result = json.loads(response.content)
-        if result["result"] is not None:
+
+class BitcoinRPC:
+    def __init__(self, uri):
+        # pull network out of the schema, and set the schema back to HTTP for RPC
+        self.config = urlparse(uri)
+        self.network = self.config.scheme
+        self.bitcoind = f"http://{self.config.netloc}"
+        self.version = None
+
+    def __getattr__(self, method):
+        def wrapper(method, params=[], **kwargs):
+            data = {
+                "method": method,
+                "params": params,
+                "jsonrpc": "2.0",
+                "id": 0,
+            }
+            r = requests.post(self.bitcoind, json=data, **kwargs)
+            logging.debug(r.text)
+            r.raise_for_status()
+            result = r.json()
+            if result["error"] is not None:
+                raise JsonRPCException(result["error"])
             return result["result"]
-        elif result["error"] is not None:
-            raise Exception(json.dumps(result["error"]))
-    except Exception as e:
-        raise Exception("RPC call failed. Raw return output: {}".format(response))
 
+        return functools.partial(wrapper, method)
 
-def ensure_bitcoind(rpc):
-    # Test connection with bitcoind rpc
-    while True:
-        try:
-            time.sleep(1)
-            rpc_request(rpc, "getblockcount", [])
-            break
-        except Exception as e:
-            logging.info(
-                "Bitcoin server not responding, sleeping and trying again: {}".format(
-                    str(e)
-                )
-            )
+    def wait_until_alive(self):
+        while True:
+            try:
+                time.sleep(1)
+                self.version = self.getnetworkinfo([])["version"]
+                break
+            except Exception as e:
+                logging.info("Bitcoin server not responding, sleeping for retry.")
 
 
 class TestReserves(unittest.TestCase):
@@ -81,30 +78,13 @@ class TestReserves(unittest.TestCase):
             ]
         )
 
-        while True:
-            try:
-                self.rpc = {
-                    "user": "user",
-                    "password": "password",
-                    "host": "127.0.0.1",
-                    "port": 18443,
-                }
-                print("1")
-                ensure_bitcoind(self.rpc)
-                print("2")
-                net_info = rpc_request(self.rpc, "getblockchaininfo", [], 60)
-                print("3")
-                version = rpc_request(self.rpc, "getnetworkinfo", [], 60)["version"]
-                if version >= 210000:
-                    rpc_request(self.rpc, "createwallet", ["default"], 60)
-                print("4")
-                assert net_info["chain"] == "regtest"
-                break
-            except Exception as e:
-                logging.info(
-                    "Regtest daemon not responding yet, sleeping: {}\n".format(e)
-                )
-                time.sleep(2)
+        self.bitcoin = BitcoinRPC("regtest://user:password@127.0.0.1:18443")
+        self.bitcoin.wait_until_alive()
+        if self.bitcoin.version >= 210000:
+            self.bitcoin.createwallet(["default"])
+
+        net_info = self.bitcoin.getblockchaininfo([])
+        assert net_info["chain"] == "regtest"
 
     @classmethod
     def tearDownClass(self):
@@ -117,7 +97,7 @@ class TestReserves(unittest.TestCase):
         logging.info(
             "Generating a regtest PoR file, and running it through the validator"
         )
-        assert rpc_request(self.rpc, "getbalance", []) == 0
+        self.bitcoin.getbalance([]) == 0
 
         # Generate 3 3-of-4 addresses using 3 static pubkeys:
         # 0) legacy uncompressed
@@ -144,41 +124,35 @@ class TestReserves(unittest.TestCase):
             "03534341220e385e2d9ac1db696dceb3db48f96ed1d2718393302e7fe88f78976f"
         )
 
-        legacy = rpc_request(
-            self.rpc,
-            "createmultisig",
+        legacy = self.bitcoin.createmultisig(
             [3, static_uncompressed_keys + [legacy_key], "legacy"],
         )
-        nested = rpc_request(
-            self.rpc,
-            "createmultisig",
+        nested = self.bitcoin.createmultisig(
             [3, static_compressed_keys + [nested_key], "p2sh-segwit"],
         )
-        native = rpc_request(
-            self.rpc,
-            "createmultisig",
+        native = self.bitcoin.createmultisig(
             [3, static_compressed_keys + [native_key], "bech32"],
         )
 
         # Deposit some specific amounts for testing the utxo scanning
-        gen_addr = rpc_request(self.rpc, "getnewaddress", [])
-        rpc_request(self.rpc, "generatetoaddress", [101, gen_addr])
+        gen_addr = self.bitcoin.getnewaddress([])
+        self.bitcoin.generatetoaddress([101, gen_addr])
         dep_sizes = [Decimal("0.0001"), Decimal("0.00004"), Decimal("0.000007")]
         for addr, dep_size in zip(
             [legacy["address"], nested["address"], native["address"]], dep_sizes
         ):
-            rpc_request(self.rpc, "sendtoaddress", [addr, str(dep_size)])
-        gen_addr = rpc_request(self.rpc, "getnewaddress", [])
-        rpc_request(self.rpc, "generatetoaddress", [1, gen_addr])
+            self.bitcoin.sendtoaddress([addr, str(dep_size)])
+        gen_addr = self.bitcoin.getnewaddress([])
+        self.bitcoin.generatetoaddress([1, gen_addr])
 
         # This is where validator will check in history
-        proof_height = rpc_request(self.rpc, "getblockcount", [])
-        proof_hash = rpc_request(self.rpc, "getblockhash", [proof_height])
+        proof_height = self.bitcoin.getblockcount([])
+        proof_hash = self.bitcoin.getblockhash([proof_height])
 
         # Do another deposit to make sure this isn't found by the validator script
-        rpc_request(self.rpc, "sendtoaddress", [native["address"], 1])
-        gen_addr = rpc_request(self.rpc, "getnewaddress", [])
-        last_blocks = rpc_request(self.rpc, "generatetoaddress", [10, gen_addr])
+        self.bitcoin.sendtoaddress([native["address"], 1])
+        gen_addr = self.bitcoin.getnewaddress([])
+        last_blocks = self.bitcoin.generatetoaddress([10, gen_addr])
         total_height = proof_height + 10
 
         # Construct the proof, tool takes uncompressed version and convertes internally
@@ -186,7 +160,7 @@ class TestReserves(unittest.TestCase):
             "height": proof_height,
             "chain": "regtest",
             "claim": {"m": 3, "n": 4},
-            "total": int(sum(dep_sizes)),
+            "total": float(sum(dep_sizes)),
             "keys": static_uncompressed_keys,
         }
         proof["address"] = [
@@ -214,12 +188,8 @@ class TestReserves(unittest.TestCase):
         run_args = [
             "python",
             "/app/validate_reserves.py",
-            "--rpcauth",
-            "user:password",
-            "--rpchost",
-            "127.0.0.1",
-            "--rpcport",
-            "18443",
+            "--bitcoin",
+            "regtest://user:password@127.0.0.1:18443",
             "--proof",
             "test.proof",
             "--result-file",
@@ -231,25 +201,24 @@ class TestReserves(unittest.TestCase):
         with open(proof_hash + "_result.json") as f:
             result = json.load(f)
             self.assertEqual(str(result["amount_proven"]), str(sum(dep_sizes)))
+            self.assertEqual(str(result["amount_claimed"]), str(sum(dep_sizes)))
 
         # Check that blockheight looks right
-        self.assertEqual(rpc_request(self.rpc, "getblockcount", []), proof_height)
+        self.assertEqual(self.bitcoin.getblockcount([]), proof_height)
 
         # --reconsider call to make sure that it resets blockheight of the node, don't use rpchost to check default
         run_args = [
             "python",
             "/app/validate_reserves.py",
-            "--rpcauth",
-            "user:password",
-            "--rpcport",
-            "18443",
+            "--bitcoin",
+            "regtest://user:password@127.0.0.1:18443",
             "--reconsider",
         ]
         output = subprocess.check_output(run_args).decode("utf-8")
-        while rpc_request(self.rpc, "getblockcount", []) != total_height:
+        while self.bitcoin.getblockcount([]) != total_height:
             time.sleep(0.1)
 
-        self.assertEqual(rpc_request(self.rpc, "getbestblockhash", []), last_blocks[-1])
+        self.assertEqual(self.bitcoin.getbestblockhash([]), last_blocks[-1])
 
         # check rejection of proofs containing duplicate addresses/scripts
         proof["address"].append(proof["address"][0])
@@ -261,12 +230,8 @@ class TestReserves(unittest.TestCase):
         run_args = [
             "python",
             "/app/validate_reserves.py",
-            "--rpcauth",
-            "user:password",
-            "--rpchost",
-            "127.0.0.1",
-            "--rpcport",
-            "18443",
+            "--bitcoin",
+            "regtest://user:password@127.0.0.1:18443",
             "--proof",
             "testbad.proof",
             "--result-file",

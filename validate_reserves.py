@@ -6,61 +6,59 @@ from collections import Counter
 import json
 import logging
 import math
+import os
 import requests
-from requests.auth import _basic_auth_str
 import time
 import yaml
+from urllib.parse import urlparse
+import functools
 
 
-def rpc_request(rpc, method, params, timeout=5):
-    headers = {
-        "Authorization": _basic_auth_str(rpc["user"], rpc["password"]),
-        "Content-Type": "application/json",
-    }
-    data = {
-        "method": method,
-        "params": params,
-        "jsonrpc": "2.0",
-        "id": 0,
-    }
-    encoded_data = json.dumps(data).encode("utf-8")
+class JsonRPCException(Exception):
+    pass
 
-    response = requests.post(
-        "http://{}:{}".format(rpc["host"], rpc["port"]),
-        data=encoded_data,
-        headers=headers,
-        timeout=timeout,
-    )
-    try:
-        result = json.loads(response.content)
-        if result["result"] is not None:
+
+class BitcoinRPC:
+    def __init__(self, uri):
+        # pull network out of the schema, and set the schema back to HTTP for RPC
+        self.config = urlparse(uri)
+        self.network = self.config.scheme
+        self.bitcoind = f"http://{self.config.netloc}"
+        self.version = None
+
+    def __getattr__(self, method):
+        def wrapper(method, params=[], **kwargs):
+            data = {
+                "method": method,
+                "params": params,
+                "jsonrpc": "2.0",
+                "id": 0,
+            }
+            r = requests.post(self.bitcoind, json=data, **kwargs)
+            logging.debug(r.text)
+            r.raise_for_status()
+            result = r.json()
+            if result["error"] is not None:
+                raise JsonRPCException(result["error"])
             return result["result"]
-        elif result["error"] is not None:
-            raise Exception(json.dumps(result["error"]))
-    except Exception as e:
-        raise Exception("RPC call failed. Raw return output: {}".format(response))
+
+        return functools.partial(wrapper, method)
+
+    def wait_until_alive(self):
+        while True:
+            try:
+                time.sleep(1)
+                self.version = self.getnetworkinfo([])["version"]
+                break
+            except Exception as e:
+                logging.info("Bitcoin server not responding, sleeping for retry.")
 
 
-def ensure_bitcoind(rpc):
-    # Test connection with bitcoind rpc
-    while True:
-        try:
-            time.sleep(1)
-            rpc_request(rpc, "getblockcount", [])
-            break
-        except Exception as e:
-            logging.info(
-                "Bitcoin server not responding, sleeping and trying again: {}".format(
-                    str(e)
-                )
-            )
-
-
-def compile_proofs(rpc, proof):
+def compile_proofs(bitcoin, proof):
     if proof is None:
         raise Exception("Unable to load proof file")
 
-    info = rpc_request(rpc, "getblockchaininfo", [])
+    info = bitcoin.getblockchaininfo([])
     # Re-org failure is really odd and unclear to the user when pruning
     # so we're not bothering to support this.
     if info["pruned"]:
@@ -70,7 +68,7 @@ def compile_proofs(rpc, proof):
 
     network = info["chain"]
 
-    block_count = rpc_request(rpc, "getblockcount", [])
+    block_count = bitcoin.getblockcount([])
     logging.info("Bitcoind alive: At block {}".format(block_count))
 
     addresses = []
@@ -83,7 +81,7 @@ def compile_proofs(rpc, proof):
         logging.info("Done.")
 
         # Refresh block count after file loads in case we made progress
-        block_count = rpc_request(rpc, "getblockcount", [])
+        block_count = bitcoin.getblockcount([])
 
         if network != proof_data["chain"]:
             raise Exception(
@@ -97,10 +95,10 @@ def compile_proofs(rpc, proof):
                 "Chain height locally is behind the claimed height in the proof. Bailing."
             )
 
-        block_hash = rpc_request(rpc, "getblockhash", [proof_data["height"]])
+        block_hash = bitcoin.getblockhash([proof_data["height"]])
 
         try:
-            rpc_request(rpc, "getblock", [block_hash])
+            bitcoin.getblock([block_hash])
         except Exception as e:
             if "pruned":
                 raise Exception(
@@ -250,11 +248,11 @@ def compile_proofs(rpc, proof):
         }
 
 
-def validate_proofs(rpc, proof_data):
+def validate_proofs(bitcoin, proof_data):
     if proof_data is None:
         raise Exception("Needs proof arg")
 
-    info = rpc_request(rpc, "getblockchaininfo", [])
+    info = bitcoin.getblockchaininfo([])
     # Re-org failure is really odd and unclear to the user when pruning
     # so we're not bothering to support this.
     if info["pruned"]:
@@ -262,16 +260,14 @@ def validate_proofs(rpc, proof_data):
             "Proof of Reserves on pruned nodes not well-supported. Node can get stuck reorging past pruned blocks."
         )
 
-    logging.info(
-        "Bitcoind alive: At block {}".format(rpc_request(rpc, "getblockcount", []))
-    )
+    logging.info("Bitcoind alive: At block {}".format(bitcoin.getblockcount([])))
 
     descriptors_to_check = []
 
-    block_hash = rpc_request(rpc, "getblockhash", [proof_data["height"]])
+    block_hash = bitcoin.getblockhash([proof_data["height"]])
 
     # Check that we know about that block before doing anything
-    block_info = rpc_request(rpc, "getblock", [block_hash])
+    block_info = bitcoin.getblock([block_hash])
 
     # WARNING This can be unstable if there's a reorg at tip
     if block_info["confirmations"] < 1:
@@ -290,16 +286,16 @@ def validate_proofs(rpc, proof_data):
     # If we're at tip the key doesn't exist and we can't freeze, so continue
     if "nextblockhash" in block_info:
         try:
-            rpc_request(rpc, "invalidateblock", [block_info["nextblockhash"]])
+            bitcoin.invalidateblock([block_info["nextblockhash"]])
         except Exception:
             logging.info("Invalidate call timed out... continuing")
             pass
 
     # Wait until we can get response from rpc server
-    ensure_bitcoind(rpc)
+    bitcoin.wait_until_alive()
 
     # Longer calls for next section to avoid timeouts from the reorg computation happening
-    best_hash = rpc_request(rpc, "getbestblockhash", [], 60)
+    best_hash = bitcoin.getbestblockhash([], timeout=60)
     while best_hash != block_hash:
         minute_wait = 0.5
         logging.info(
@@ -311,12 +307,12 @@ def validate_proofs(rpc, proof_data):
             "Blocks to go: {}".format(
                 abs(
                     block_info["height"]
-                    - rpc_request(rpc, "getblock", [best_hash], 30)["height"]
+                    - bitcoin.getblock([best_hash], timeout=30)["height"]
                 )
             )
         )
         time.sleep(60 * minute_wait)
-        best_hash = rpc_request(rpc, "getbestblockhash", [], 30)
+        best_hash = bitcoin.getbestblockhash([], timeout=30)
 
     # "413 Request Entity Too Large" otherwise
     chunk_size = 60000
@@ -330,18 +326,16 @@ def validate_proofs(rpc, proof_data):
             )
         )
         # Making extremely long timeout for scanning job
-        res = rpc_request(
-            rpc,
-            "scantxoutset",
+        res = bitcoin.scantxoutset(
             ["start", descriptors_to_check[i * chunk_size : (i + 1) * chunk_size]],
-            60 * 60,
+            timeout=60 * 60,
         )
         logging.info("Done. Took {} seconds".format(time.time() - now))
 
         if not res["success"]:
             raise Exception("Scan results not successful???")
 
-        if rpc["version"] >= 210000 and res["bestblock"] != block_hash:
+        if bitcoin.version >= 210000 and res["bestblock"] != block_hash:
             raise Exception(
                 "We retrieved snapshot from wrong block? {} vs {}".format(
                     res["bestblock"], block_hash
@@ -359,6 +353,7 @@ def validate_proofs(rpc, proof_data):
         )
     )
     return {
+        "amount_claimed": proof_data["total"],
         "amount_proven": proven_amount,
         "height": proof_data["height"],
         "block": block_hash,
@@ -366,9 +361,11 @@ def validate_proofs(rpc, proof_data):
 
 
 if __name__ == "__main__":
+    BITCOIND_DEFAULT = os.environ.get("BITCOIND", "https://bitcoin:pass@localhost:1234")
     parser = argparse.ArgumentParser(
         description="Tool to validate BitMEX Proof of Reserves"
     )
+
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument(
         "--proof",
@@ -380,15 +377,8 @@ if __name__ == "__main__":
         action="store_true",
     )
     parser.add_argument(
-        "--rpcauth", help="<username>:<password> for RPC connection", required=True
+        "--bitcoind", default=BITCOIND_DEFAULT, help="Override bitcoind URI"
     )
-    parser.add_argument(
-        "--rpchost",
-        help="Hostname for RPC connection",
-        required=False,
-        default="127.0.0.1",
-    )
-    parser.add_argument("--rpcport", help="Port for RPC connection", required=True)
     parser.add_argument(
         "--verbose", "-v", help="Prints more information about scanning results"
     )
@@ -398,36 +388,35 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    rpc = {
-        "user": args.rpcauth.split(":")[0],
-        "password": args.rpcauth.split(":")[1],
-        "host": args.rpchost,
-        "port": args.rpcport,
-    }
-
+    bitcoin = BitcoinRPC(args.bitcoind)
     logging.getLogger().setLevel(logging.INFO)
 
-    ensure_bitcoind(rpc)
-    rpc["version"] = rpc_request(rpc, "getnetworkinfo", [])["version"]
-    if rpc["version"] < 180100:
+    bitcoin.wait_until_alive()
+    if bitcoin.version < 180100:
         raise Exception("You need to run Bitcoin Core v0.18.1 or higher!")
 
     if args.reconsider:
         logging.info("Reconsidering blocks and exiting.")
-        for tip in rpc_request(rpc, "getchaintips", []):
+        for tip in bitcoin.getchaintips([]):
             # Move on from timeout
             try:
-                rpc_request(rpc, "reconsiderblock", [tip["hash"]], 0.01)
+                bitcoin.reconsiderblock([tip["hash"]], timeout=0.01)
             except Exception:
                 pass
     elif args.proof is not None:
-        compiled_proof = compile_proofs(rpc, args.proof)
-        validated = validate_proofs(rpc, compiled_proof)
+        compiled_proof = compile_proofs(bitcoin, args.proof)
+        validated = validate_proofs(bitcoin, compiled_proof)
         if args.result_file is not None:
-            logging.info("Writing results to {}".format(args.result_file))
+            logging.info(f"Writing results {validated} to {args.result_file}")
             with open(args.result_file, "w") as f:
                 json.dump(validated, f)
 
         logging.info(
             "IMPORTANT! Call this script with --reconsider to bring your bitcoin node back to tip when satisfied with the results"
         )
+
+        if validated["amount_claimed"] > validated["amount_proven"]:
+            print(
+                "WARNING: More claimed {validated['amount_claimed']} than proven {validated['amount_proven']}"
+            )
+            exit(-1)
