@@ -50,7 +50,7 @@ succeeding eventually.
 
 Sample output from running PoR tool on testnet dataset against testnet bitcoind RPC server.
 ```
-$ python3 validate_reserves.py --proof testnet_reserves.yaml --rpcauth username:password 127.0.0.1 --rpcport 18332
+$ python3 validate_reserves.py --proof testnet_reserves.yaml --bitcoind testnet://username:password@localhost:18332
 ...
 WARNING:root:Proof of Reserves on pruned nodes not well-supported. Node can get stuck reorging past pruned blocks.
 INFO:root:Bitcoind alive: At block 1938810
@@ -69,7 +69,7 @@ Proven amount(BTC): 205393.049391
 INFO:root:IMPORTANT! Call this script with --reconsider to bring your bitcoin node back to tip when satisfied with the results
 
 # Run --reconsider to re-set your node to undo block invalidations, getting your node back to chaintip
-$ python3 validate_reserves.py --reconsider --rpcauth username:password --rpcport 18332
+$ python3 validate_reserves.py --reconsider --bitcoind testnet://username:password@localhost:18332
 INFO:root:Reconsidering blocks and exiting.
 ```
 
