@@ -54,10 +54,17 @@ class BitcoinRPC:
                 logging.info("Bitcoin server not responding, sleeping for retry.")
 
 
-def compile_proofs(bitcoin, proof):
-    if proof is None:
-        raise Exception("Unable to load proof file")
+def read_proof_file(proof_file):
+    with open(proof_file) as data:
+        logging.info(
+            "Loading yaml proof file into memory, this may take a few minutes."
+        )
+        data = yaml.safe_load(data)
+        logging.info("Done loading.")
+        return data
 
+
+def compile_proofs(bitcoin, proof_data):
     info = bitcoin.getblockchaininfo([])
     # Re-org failure is really odd and unclear to the user when pruning
     # so we're not bothering to support this.
@@ -73,179 +80,165 @@ def compile_proofs(bitcoin, proof):
 
     addresses = []
 
-    with open(proof) as proof_file:
-        logging.info(
-            "Loading yaml proof file into memory, this may take a few minutes."
+    if network != proof_data["chain"]:
+        raise Exception(
+            "Network mismatch: bitcoind:{} vs proof:{}".format(
+                network, proof_data["chain"]
+            )
         )
-        proof_data = yaml.safe_load(proof_file)
-        logging.info("Done.")
 
-        # Refresh block count after file loads in case we made progress
-        block_count = bitcoin.getblockcount([])
+    if block_count < proof_data["height"]:
+        raise Exception(
+            "Chain height locally is behind the claimed height in the proof. Bailing."
+        )
 
-        if network != proof_data["chain"]:
+    block_hash = bitcoin.getblockhash([proof_data["height"]])
+
+    try:
+        bitcoin.getblock([block_hash])
+    except Exception as e:
+        if "pruned":
             raise Exception(
-                "Network mismatch: bitcoind:{} vs proof:{}".format(
-                    network, proof_data["chain"]
+                "Looks like your node has pruned beyond the reserve snapshot; bailing."
+            )
+        else:
+            raise Exception("Fatal: Unable to retrieve block at snapshot height")
+
+    logging.info("Running test against {} dataset".format(proof_data["chain"]))
+
+    m_sigs = proof_data["claim"]["m"]
+    n_keys = proof_data["claim"]["n"]
+    keys = proof_data["keys"]
+    xpubs = proof_data.get("xpub", [])
+    logging.info(
+        "Multisig {}/{} keys being proven against: {}".format(m_sigs, n_keys, keys)
+    )
+    logging.info("or addresses derived from pubkey: {}".format(xpubs))
+
+    addrs = proof_data["address"]
+
+    dupe_addresses = [
+        k for k, c in Counter([a["addr"] for a in addrs]).items() if c > 1
+    ]
+    if dupe_addresses:
+        raise ValueError("Duplicate address: {}".format(dupe_addresses))
+
+    dupe_scripts = [
+        k for k, c in Counter([a["script"] for a in addrs]).items() if c > 1
+    ]
+    if dupe_scripts:
+        raise ValueError("Duplicate scripts: {}".format(dupe_scripts))
+
+    # Lastly, addresses
+    for addr_info in addrs:
+        if addr_info["addr_type"] == "unspendable":
+            logging.warning(
+                "Address {} is marked as unspendable, skipping this value".format(
+                    addr_info["addr"]
                 )
             )
+            continue
 
-        if block_count < proof_data["height"]:
-            raise Exception(
-                "Chain height locally is behind the claimed height in the proof. Bailing."
-            )
+        elif addr_info["addr_type"] in ("sh", "sh_wsh", "wsh"):
+            # Each address should have compressed or uncompressed keys in this set
+            pubkeys_left = copy.deepcopy(keys)
 
-        block_hash = bitcoin.getblockhash([proof_data["height"]])
+            if addr_info["addr_type"] in ("wsh", "sh_wsh"):  # Switch to compressed
+                pubkeys_left = []
+                for key in keys:
+                    # Trying "both" compressed versions to avoid additional python dependencies
+                    even_key = "02" + key[2:-64]
+                    odd_key = "03" + key[2:-64]
+                    if even_key in addr_info["script"]:
+                        pubkeys_left.append(even_key)
+                    elif odd_key in addr_info["script"]:
+                        pubkeys_left.append(odd_key)
+                    else:
+                        raise Exception("Wrong compressed keys?")
 
-        try:
-            bitcoin.getblock([block_hash])
-        except Exception as e:
-            if "pruned":
+            # Should have one additional vanitygen key
+            assert len(pubkeys_left) == n_keys - 1
+
+            # Next, we make sure the script is a multisig template
+            pubkey_len = 33 * 2 if addr_info["addr_type"] != "sh" else 65 * 2
+            pubkey_sep = hex(int(pubkey_len / 2))[2:]
+
+            script = addr_info["script"]
+            if script[:2] != hex(0x50 + m_sigs)[2:]:
                 raise Exception(
-                    "Looks like your node has pruned beyond the reserve snapshot; bailing."
+                    "Address script doesn't match multisig: {}".format(script)
                 )
-            else:
-                raise Exception("Fatal: Unable to retrieve block at snapshot height")
+            script = script[2:]
+            found_vanitykey = False
+            wrong_keys = False
+            ordered_pubkeys = []
+            for i in range(len(pubkeys_left) + 1):
+                if script[:2] != pubkey_sep:
+                    raise Exception(
+                        "Address script doesn't match multisig: {}".format(pubkey_sep)
+                    )
+                pubkey = script[2 : 2 + pubkey_len]
+                ordered_pubkeys.append(pubkey)
+                script = script[2 + pubkey_len :]
+                if pubkey not in pubkeys_left:
+                    if found_vanitykey == False:
+                        found_vanitykey = True
+                    else:
+                        # Some testnet values have wrong keys, ignore balance and continue
+                        wrong_keys = True
+                        break
+                else:
+                    pubkeys_left.remove(pubkey)
 
-        logging.info("Running test against {} dataset".format(proof_data["chain"]))
-
-        m_sigs = proof_data["claim"]["m"]
-        n_keys = proof_data["claim"]["n"]
-        keys = proof_data["keys"]
-        xpubs = proof_data.get("xpub", [])
-        logging.info(
-            "Multisig {}/{} keys being proven against: {}".format(m_sigs, n_keys, keys)
-        )
-        logging.info("or addresses derived from pubkey: {}".format(xpubs))
-
-        addrs = proof_data["address"]
-
-        dupe_addresses = [
-            k for k, c in Counter([a["addr"] for a in addrs]).items() if c > 1
-        ]
-        if dupe_addresses:
-            raise ValueError("Duplicate address: {}".format(dupe_addresses))
-
-        dupe_scripts = [
-            k for k, c in Counter([a["script"] for a in addrs]).items() if c > 1
-        ]
-        if dupe_scripts:
-            raise ValueError("Duplicate scripts: {}".format(dupe_scripts))
-
-        # Lastly, addresses
-        for addr_info in addrs:
-            if addr_info["addr_type"] == "unspendable":
+            if wrong_keys:
                 logging.warning(
-                    "Address {} is marked as unspendable, skipping this value".format(
+                    "Address {} is missing some given keys, skipping these values".format(
                         addr_info["addr"]
                     )
                 )
                 continue
 
-            elif addr_info["addr_type"] in ("sh", "sh_wsh", "wsh"):
-                # Each address should have compressed or uncompressed keys in this set
-                pubkeys_left = copy.deepcopy(keys)
+            assert len(pubkeys_left) == 0
+            assert found_vanitykey
 
-                if addr_info["addr_type"] in ("wsh", "sh_wsh"):  # Switch to compressed
-                    pubkeys_left = []
-                    for key in keys:
-                        # Trying "both" compressed versions to avoid additional python dependencies
-                        even_key = "02" + key[2:-64]
-                        odd_key = "03" + key[2:-64]
-                        if even_key in addr_info["script"]:
-                            pubkeys_left.append(even_key)
-                        elif odd_key in addr_info["script"]:
-                            pubkeys_left.append(odd_key)
-                        else:
-                            raise Exception("Wrong compressed keys?")
-
-                # Should have one additional vanitygen key
-                assert len(pubkeys_left) == n_keys - 1
-
-                # Next, we make sure the script is a multisig template
-                pubkey_len = 33 * 2 if addr_info["addr_type"] != "sh" else 65 * 2
-                pubkey_sep = hex(int(pubkey_len / 2))[2:]
-
-                script = addr_info["script"]
-                if script[:2] != hex(0x50 + m_sigs)[2:]:
-                    raise Exception(
-                        "Address script doesn't match multisig: {}".format(script)
-                    )
-                script = script[2:]
-                found_vanitykey = False
-                wrong_keys = False
-                ordered_pubkeys = []
-                for i in range(len(pubkeys_left) + 1):
-                    if script[:2] != pubkey_sep:
-                        raise Exception(
-                            "Address script doesn't match multisig: {}".format(
-                                pubkey_sep
-                            )
-                        )
-                    pubkey = script[2 : 2 + pubkey_len]
-                    ordered_pubkeys.append(pubkey)
-                    script = script[2 + pubkey_len :]
-                    if pubkey not in pubkeys_left:
-                        if found_vanitykey == False:
-                            found_vanitykey = True
-                        else:
-                            # Some testnet values have wrong keys, ignore balance and continue
-                            wrong_keys = True
-                            break
-                    else:
-                        pubkeys_left.remove(pubkey)
-
-                if wrong_keys:
-                    logging.warning(
-                        "Address {} is missing some given keys, skipping these values".format(
-                            addr_info["addr"]
-                        )
-                    )
-                    continue
-
-                assert len(pubkeys_left) == 0
-                assert found_vanitykey
-
-                if script != hex(0x50 + n_keys)[2:] + "ae":
-                    raise Exception(
-                        "Address script doesn't match multisig: {}".format(script)
-                    )
-
-                # Lastly, construct the descriptor for querying
-                ordered_join = ",".join(ordered_pubkeys)
-                if addr_info["addr_type"] == "sh":
-                    descriptor = "sh(multi({},{}))".format(m_sigs, ordered_join)
-                elif addr_info["addr_type"] == "sh_wsh":
-                    descriptor = "sh(wsh(multi({},{})))".format(m_sigs, ordered_join)
-                elif addr_info["addr_type"] == "wsh":
-                    descriptor = "wsh(multi({},{}))".format(m_sigs, ordered_join)
-                else:
-                    raise Exception("Unexpected addr_type")
-
-            elif addr_info["addr_type"] in ("wpkh"):
-                # check xpub, then we present descriptor as script
-                for xp in xpubs:
-                    if xp in addr_info["script"]:
-                        descriptor = addr_info["script"]
-                        break
-                else:
-                    raise Exception(
-                        "None of expected pubkeys found in descriptor {}".format(
-                            addr_info["script"]
-                        )
-                    )
-            else:
+            if script != hex(0x50 + n_keys)[2:] + "ae":
                 raise Exception(
-                    "Unknown address type {}".format(addr_info["addr_type"])
+                    "Address script doesn't match multisig: {}".format(script)
                 )
 
-            addresses.append({"desc": descriptor})
+            # Lastly, construct the descriptor for querying
+            ordered_join = ",".join(ordered_pubkeys)
+            if addr_info["addr_type"] == "sh":
+                descriptor = "sh(multi({},{}))".format(m_sigs, ordered_join)
+            elif addr_info["addr_type"] == "sh_wsh":
+                descriptor = "sh(wsh(multi({},{})))".format(m_sigs, ordered_join)
+            elif addr_info["addr_type"] == "wsh":
+                descriptor = "wsh(multi({},{}))".format(m_sigs, ordered_join)
+            else:
+                raise Exception("Unexpected addr_type")
 
-        return {
-            "address": addresses,
-            "height": proof_data["height"],
-            "total": proof_data["total"],
-        }
+        elif addr_info["addr_type"] in ("wpkh"):
+            # check xpub, then we present descriptor as script
+            for xp in xpubs:
+                if xp in addr_info["script"]:
+                    descriptor = addr_info["script"]
+                    break
+            else:
+                raise Exception(
+                    "None of expected pubkeys found in descriptor {}".format(
+                        addr_info["script"]
+                    )
+                )
+        else:
+            raise Exception("Unknown address type {}".format(addr_info["addr_type"]))
+
+        addresses.append({"desc": descriptor})
+
+    return {
+        "address": addresses,
+        "height": proof_data["height"],
+        "total": proof_data["total"],
+    }
 
 
 def validate_proofs(bitcoin, proof_data):
@@ -360,6 +353,16 @@ def validate_proofs(bitcoin, proof_data):
     }
 
 
+def reconsider_blocks(bitcoin):
+    logging.info("Reconsidering blocks and exiting.")
+    for tip in bitcoin.getchaintips([]):
+        # Move on from timeout
+        try:
+            bitcoin.reconsiderblock([tip["hash"]], timeout=0.01)
+        except Exception:
+            pass
+
+
 if __name__ == "__main__":
     BITCOIND_DEFAULT = os.environ.get("BITCOIND", "https://bitcoin:pass@localhost:1234")
     parser = argparse.ArgumentParser(
@@ -396,16 +399,13 @@ if __name__ == "__main__":
         raise Exception("You need to run Bitcoin Core v0.18.1 or higher!")
 
     if args.reconsider:
-        logging.info("Reconsidering blocks and exiting.")
-        for tip in bitcoin.getchaintips([]):
-            # Move on from timeout
-            try:
-                bitcoin.reconsiderblock([tip["hash"]], timeout=0.01)
-            except Exception:
-                pass
+        reconsider_blocks(bitcoin)
+
     elif args.proof is not None:
-        compiled_proof = compile_proofs(bitcoin, args.proof)
+        data = read_proof_file(args.proof)
+        compiled_proof = compile_proofs(bitcoin, data)
         validated = validate_proofs(bitcoin, compiled_proof)
+
         if args.result_file is not None:
             logging.info(f"Writing results {validated} to {args.result_file}")
             with open(args.result_file, "w") as f:
