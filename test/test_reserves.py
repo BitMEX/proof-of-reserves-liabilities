@@ -54,6 +54,92 @@ class BitcoinRPC:
                 logging.info("Bitcoin server not responding, sleeping for retry.")
 
 
+def make_reserves_proof(bitcoin, dep_sizes=["0.0001", "0.00004", "0.000007"]):
+    logging.info("Generating a regtest PoR file, and running it through the validator")
+    assert bitcoin.getbalance([]) == 0
+
+    # Generate 3 3-of-4 addresses using 3 static pubkeys:
+    # 0) legacy uncompressed
+    # 1) nested segwit
+    # 2) native segwit
+
+    # testnet keys
+    static_uncompressed_keys = [
+        "04ceba29da1af96a0f2ef7cda6950b8be2baeb1adf12c0d5efebb70dbcaa086ba029cd82a0cfb8dedf65b8760cf271f2b8a50466bbf0b9339c5ffefbe2a4165326",
+        "04d5a42b90e9d7156155661979530a09d2e12e252ef4104e5611274a7ae7e2b0940657307b129bef948ea932d2d3f20e1a0513c9e84fd850f743ee66a2e3348d1f",
+        "04c10be2f0dc20f4285c25156aa22a0c46d2b89ccc4d1c8eaed92ea0c1a8f40c0003c26eda3bba9d087d0c521327fa1f0426ca510147957c8e342527ce7d9d0048",
+    ]
+    static_compressed_keys = [
+        "02ceba29da1af96a0f2ef7cda6950b8be2baeb1adf12c0d5efebb70dbcaa086ba0",
+        "03d5a42b90e9d7156155661979530a09d2e12e252ef4104e5611274a7ae7e2b094",
+        "02c10be2f0dc20f4285c25156aa22a0c46d2b89ccc4d1c8eaed92ea0c1a8f40c00",
+    ]
+
+    legacy_key = "04ffeec30e5b7657f12f52249e6ab282e768a7a829b79213850af60121dea49fd230598677929e637beed9624bfcfb62721ff7f14a88d996521520651c993e3f41"
+    nested_key = "025a2edfd78a4d8bba9616170a02bc61736020d66e447d4501130148cc0fcb5b24"
+    native_key = "03534341220e385e2d9ac1db696dceb3db48f96ed1d2718393302e7fe88f78976f"
+
+    legacy = bitcoin.createmultisig(
+        [3, static_uncompressed_keys + [legacy_key], "legacy"],
+    )
+    nested = bitcoin.createmultisig(
+        [3, static_compressed_keys + [nested_key], "p2sh-segwit"],
+    )
+    native = bitcoin.createmultisig(
+        [3, static_compressed_keys + [native_key], "bech32"],
+    )
+
+    # Deposit some specific amounts for testing the utxo scanning
+    gen_addr = bitcoin.getnewaddress([])
+    bitcoin.generatetoaddress([101, gen_addr])
+
+    dep_sizes = [Decimal(x) for x in dep_sizes]
+
+    for addr, dep_size in zip(
+        [legacy["address"], nested["address"], native["address"]], dep_sizes
+    ):
+        bitcoin.sendtoaddress([addr, str(dep_size)])
+    gen_addr = bitcoin.getnewaddress([])
+    bitcoin.generatetoaddress([1, gen_addr])
+
+    # This is where validator will check in history
+    proof_height = bitcoin.getblockcount([])
+
+    # Do another deposit *above* the proof height to make sure this isn't found by the validator script
+    bitcoin.sendtoaddress([native["address"], 1])
+
+    # now mine blocks above the proof's height
+    gen_addr = bitcoin.getnewaddress([])
+    bitcoin.generatetoaddress([10, gen_addr])
+
+    # Construct the proof, tool takes uncompressed version and convertes internally
+    proof = {
+        "height": proof_height,
+        "chain": "regtest",
+        "claim": {"m": 3, "n": 4},
+        "total": float(sum(dep_sizes)),
+        "keys": static_uncompressed_keys,
+    }
+    proof["address"] = [
+        {
+            "addr_type": "sh",
+            "addr": legacy["address"],
+            "script": legacy["redeemScript"],
+        },
+        {
+            "addr_type": "sh_wsh",
+            "addr": nested["address"],
+            "script": nested["redeemScript"],
+        },
+        {
+            "addr_type": "wsh",
+            "addr": native["address"],
+            "script": native["redeemScript"],
+        },
+    ]
+    return proof
+
+
 class TestReserves(unittest.TestCase):
     @classmethod
     def setUpClass(self):
@@ -94,95 +180,16 @@ class TestReserves(unittest.TestCase):
         os.waitpid(self.regtest_bitcoind_proc.pid, 0)
 
     def test_reserves(self):
-        logging.info(
-            "Generating a regtest PoR file, and running it through the validator"
-        )
-        self.bitcoin.getbalance([]) == 0
-
-        # Generate 3 3-of-4 addresses using 3 static pubkeys:
-        # 0) legacy uncompressed
-        # 1) nested segwit
-        # 2) native segwit
-
-        # testnet keys
-        static_uncompressed_keys = [
-            "04ceba29da1af96a0f2ef7cda6950b8be2baeb1adf12c0d5efebb70dbcaa086ba029cd82a0cfb8dedf65b8760cf271f2b8a50466bbf0b9339c5ffefbe2a4165326",
-            "04d5a42b90e9d7156155661979530a09d2e12e252ef4104e5611274a7ae7e2b0940657307b129bef948ea932d2d3f20e1a0513c9e84fd850f743ee66a2e3348d1f",
-            "04c10be2f0dc20f4285c25156aa22a0c46d2b89ccc4d1c8eaed92ea0c1a8f40c0003c26eda3bba9d087d0c521327fa1f0426ca510147957c8e342527ce7d9d0048",
-        ]
-        static_compressed_keys = [
-            "02ceba29da1af96a0f2ef7cda6950b8be2baeb1adf12c0d5efebb70dbcaa086ba0",
-            "03d5a42b90e9d7156155661979530a09d2e12e252ef4104e5611274a7ae7e2b094",
-            "02c10be2f0dc20f4285c25156aa22a0c46d2b89ccc4d1c8eaed92ea0c1a8f40c00",
-        ]
-
-        legacy_key = "04ffeec30e5b7657f12f52249e6ab282e768a7a829b79213850af60121dea49fd230598677929e637beed9624bfcfb62721ff7f14a88d996521520651c993e3f41"
-        nested_key = (
-            "025a2edfd78a4d8bba9616170a02bc61736020d66e447d4501130148cc0fcb5b24"
-        )
-        native_key = (
-            "03534341220e385e2d9ac1db696dceb3db48f96ed1d2718393302e7fe88f78976f"
-        )
-
-        legacy = self.bitcoin.createmultisig(
-            [3, static_uncompressed_keys + [legacy_key], "legacy"],
-        )
-        nested = self.bitcoin.createmultisig(
-            [3, static_compressed_keys + [nested_key], "p2sh-segwit"],
-        )
-        native = self.bitcoin.createmultisig(
-            [3, static_compressed_keys + [native_key], "bech32"],
-        )
-
-        # Deposit some specific amounts for testing the utxo scanning
-        gen_addr = self.bitcoin.getnewaddress([])
-        self.bitcoin.generatetoaddress([101, gen_addr])
-        dep_sizes = [Decimal("0.0001"), Decimal("0.00004"), Decimal("0.000007")]
-        for addr, dep_size in zip(
-            [legacy["address"], nested["address"], native["address"]], dep_sizes
-        ):
-            self.bitcoin.sendtoaddress([addr, str(dep_size)])
-        gen_addr = self.bitcoin.getnewaddress([])
-        self.bitcoin.generatetoaddress([1, gen_addr])
-
-        # This is where validator will check in history
-        proof_height = self.bitcoin.getblockcount([])
-        proof_hash = self.bitcoin.getblockhash([proof_height])
-
-        # Do another deposit to make sure this isn't found by the validator script
-        self.bitcoin.sendtoaddress([native["address"], 1])
-        gen_addr = self.bitcoin.getnewaddress([])
-        last_blocks = self.bitcoin.generatetoaddress([10, gen_addr])
-        total_height = proof_height + 10
-
-        # Construct the proof, tool takes uncompressed version and convertes internally
-        proof = {
-            "height": proof_height,
-            "chain": "regtest",
-            "claim": {"m": 3, "n": 4},
-            "total": float(sum(dep_sizes)),
-            "keys": static_uncompressed_keys,
-        }
-        proof["address"] = [
-            {
-                "addr_type": "sh",
-                "addr": legacy["address"],
-                "script": legacy["redeemScript"],
-            },
-            {
-                "addr_type": "sh_wsh",
-                "addr": nested["address"],
-                "script": nested["redeemScript"],
-            },
-            {
-                "addr_type": "wsh",
-                "addr": native["address"],
-                "script": native["redeemScript"],
-            },
-        ]
-
+        proof = make_reserves_proof(self.bitcoin)
         with open("test.proof", "w") as f:
             yaml.dump(proof, f)
+
+        proof_hash = self.bitcoin.getblockhash([proof["height"]])
+
+        # check again that validation will require some re-winding
+        tip_height = self.bitcoin.getblockcount([])
+        tip_hash = self.bitcoin.getblockhash([tip_height])
+        assert proof["height"] < tip_height
 
         # Run validator tool against the proof file
         run_args = [
@@ -200,11 +207,11 @@ class TestReserves(unittest.TestCase):
         # Check output file's value
         with open(proof_hash + "_result.json") as f:
             result = json.load(f)
-            self.assertEqual(str(result["amount_proven"]), str(sum(dep_sizes)))
-            self.assertEqual(str(result["amount_claimed"]), str(sum(dep_sizes)))
+            self.assertEqual(str(result["amount_proven"]), str(proof["total"]))
+            self.assertEqual(str(result["amount_claimed"]), str(proof["total"]))
 
         # Check that blockheight looks right
-        self.assertEqual(self.bitcoin.getblockcount([]), proof_height)
+        self.assertEqual(self.bitcoin.getblockcount([]), proof["height"])
 
         # --reconsider call to make sure that it resets blockheight of the node, don't use rpchost to check default
         run_args = [
@@ -215,10 +222,9 @@ class TestReserves(unittest.TestCase):
             "--reconsider",
         ]
         output = subprocess.check_output(run_args).decode("utf-8")
-        while self.bitcoin.getblockcount([]) != total_height:
+        while self.bitcoin.getblockcount([]) != tip_height:
             time.sleep(0.1)
-
-        self.assertEqual(self.bitcoin.getbestblockhash([]), last_blocks[-1])
+        self.assertEqual(self.bitcoin.getbestblockhash([]), tip_hash)
 
         # check rejection of proofs containing duplicate addresses/scripts
         proof["address"].append(proof["address"][0])

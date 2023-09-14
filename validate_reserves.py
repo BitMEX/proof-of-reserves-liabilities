@@ -51,7 +51,7 @@ class BitcoinRPC:
                 self.version = self.getnetworkinfo([])["version"]
                 break
             except Exception as e:
-                logging.info("Bitcoin server not responding, sleeping for retry.")
+                logging.exception("Bitcoin server not responding, sleeping for retry.")
 
 
 def read_proof_file(proof_file):
@@ -337,12 +337,9 @@ def validate_proofs(bitcoin, proof_data):
 
         proven_amount += res["total_amount"]
 
-        if args.verbose:
-            logging.info(res)
-
     logging.info(
-        "***RESULTS***\nHeight of proof: {}\nBlock proven against: {}\nProven amount(BTC): {}".format(
-            proof_data["height"], block_hash, proven_amount
+        "***RESULTS***\nHeight of proof: {}\nBlock proven against: {}\nClaimed amount (BTC): {}\nProven amount(BTC): {}".format(
+            proof_data["height"], block_hash, proof_data["total"], proven_amount
         )
     )
     return {
@@ -380,7 +377,7 @@ if __name__ == "__main__":
         action="store_true",
     )
     parser.add_argument(
-        "--bitcoind", default=BITCOIND_DEFAULT, help="Override bitcoind URI"
+        "--bitcoin", default=BITCOIND_DEFAULT, help="Override bitcoind URI"
     )
     parser.add_argument(
         "--verbose", "-v", help="Prints more information about scanning results"
@@ -391,7 +388,7 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    bitcoin = BitcoinRPC(args.bitcoind)
+    bitcoin = BitcoinRPC(args.bitcoin)
     logging.getLogger().setLevel(logging.INFO)
 
     bitcoin.wait_until_alive()
