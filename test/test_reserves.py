@@ -35,7 +35,7 @@ class BitcoinRPC:
                 "id": 0,
             }
             r = requests.post(self.bitcoind, json=data, **kwargs)
-            logging.debug(r.text)
+            logging.info(r.text)
             r.raise_for_status()
             result = r.json()
             if result["error"] is not None:
@@ -89,11 +89,16 @@ def make_reserves_proof(bitcoin, dep_sizes=["0.0001", "0.00004", "0.000007"]):
         [3, static_compressed_keys + [native_key], "bech32"],
     )
 
+    dep_sizes = [Decimal(x) for x in dep_sizes]
+
     # Deposit some specific amounts for testing the utxo scanning
     gen_addr = bitcoin.getnewaddress([])
+    spendable = sum(dep_sizes)
     bitcoin.generatetoaddress([101, gen_addr])
 
-    dep_sizes = [Decimal(x) for x in dep_sizes]
+    while bitcoin.getbalance([]) < spendable:
+        print("need more blocks for balance")
+        bitcoin.generatetoaddress([2, gen_addr])
 
     for addr, dep_size in zip(
         [legacy["address"], nested["address"], native["address"]], dep_sizes
@@ -117,7 +122,7 @@ def make_reserves_proof(bitcoin, dep_sizes=["0.0001", "0.00004", "0.000007"]):
         "height": proof_height,
         "chain": "regtest",
         "claim": {"m": 3, "n": 4},
-        "total": float(sum(dep_sizes)),
+        "total": int(100000000 * sum(dep_sizes)),
         "keys": static_uncompressed_keys,
     }
     proof["address"] = [
