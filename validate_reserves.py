@@ -335,10 +335,10 @@ def validate_proofs(bitcoin, proof_data):
                 )
             )
 
-        proven_amount += res["total_amount"]
+        proven_amount += int(100000000 * res["total_amount"])
 
     logging.info(
-        "***RESULTS***\nHeight of proof: {}\nBlock proven against: {}\nClaimed amount (BTC): {}\nProven amount(BTC): {}".format(
+        "***RESULTS***\nHeight of proof: {}\nBlock proven against: {}\nClaimed amount (sats): {}\nProven amount(sats): {}".format(
             proof_data["height"], block_hash, proof_data["total"], proven_amount
         )
     )
@@ -414,6 +414,6 @@ if __name__ == "__main__":
 
         if validated["amount_claimed"] > validated["amount_proven"]:
             print(
-                "WARNING: More claimed {validated['amount_claimed']} than proven {validated['amount_proven']}"
+                f"WARNING: More claimed {validated['amount_claimed']} than proven {validated['amount_proven']}"
             )
             exit(-1)
