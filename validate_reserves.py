@@ -124,11 +124,16 @@ def compile_proofs(bitcoin, proof_data):
         raise ValueError("Duplicate address: {}".format(dupe_addresses))
 
     dupe_scripts = [
-        k for k, c in Counter([a["script"] for a in addrs]).items() if c > 1
+        k
+        for k, c in Counter(
+            [a["script"] for a in addrs if a["addr_type"] != "unspendable"]
+        ).items()
+        if c > 1
     ]
     if dupe_scripts:
         raise ValueError("Duplicate scripts: {}".format(dupe_scripts))
 
+    unspendable = 0
     # Lastly, addresses
     for addr_info in addrs:
         if addr_info["addr_type"] == "unspendable":
@@ -137,6 +142,7 @@ def compile_proofs(bitcoin, proof_data):
                     addr_info["addr"]
                 )
             )
+            unspendable += int(addr_info["balance"])
             continue
 
         elif addr_info["addr_type"] in ("sh", "sh_wsh", "wsh"):
@@ -238,6 +244,7 @@ def compile_proofs(bitcoin, proof_data):
         "address": addresses,
         "height": proof_data["height"],
         "total": proof_data["total"],
+        "unspendable": unspendable,
     }
 
 
@@ -345,6 +352,7 @@ def validate_proofs(bitcoin, proof_data):
     return {
         "amount_claimed": proof_data["total"],
         "amount_proven": proven_amount,
+        "unspendable": proof_data["unspendable"],
         "height": proof_data["height"],
         "block": block_hash,
     }
@@ -386,6 +394,11 @@ if __name__ == "__main__":
         "--result-file",
         help="Write amount verified to a file (json format)",
     )
+    parser.add_argument(
+        "--allow-unspendable",
+        help="Allow unspendable (unproven) claims in total (testnet)",
+        action="store_true",
+    )
     args = parser.parse_args()
 
     bitcoin = BitcoinRPC(args.bitcoin)
@@ -412,8 +425,9 @@ if __name__ == "__main__":
             "IMPORTANT! Call this script with --reconsider to bring your bitcoin node back to tip when satisfied with the results"
         )
 
-        if validated["amount_claimed"] > validated["amount_proven"]:
+        unspendable = validate["unspendable"] if args.allow_unspendable else 0
+        if validated["amount_claimed"] > validated["amount_proven"] + unspendable:
             print(
-                f"WARNING: More claimed {validated['amount_claimed']} than proven {validated['amount_proven']}"
+                f"WARNING: More claimed {validated['amount_claimed']} than proven {validated['amount_proven']} (unspendable {unspendable})"
             )
             exit(-1)
