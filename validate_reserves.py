@@ -64,6 +64,15 @@ def read_proof_file(proof_file):
         return data
 
 
+def compress(pubkeys):
+    result = []
+    for key in pubkeys:
+        # Trying "both" compressed versions to avoid additional python dependencies
+        result.append("02" + key[2:-64])
+        result.append("03" + key[2:-64])
+    return result
+
+
 def compile_proofs(bitcoin, proof_data):
     info = bitcoin.getblockchaininfo([])
     # Re-org failure is really odd and unclear to the user when pruning
@@ -134,6 +143,9 @@ def compile_proofs(bitcoin, proof_data):
         raise ValueError("Duplicate scripts: {}".format(dupe_scripts))
 
     unspendable = 0
+    pubkeys_uncompressed = keys
+    pubkeys_compressed = compress(keys)
+
     # Lastly, addresses
     for addr_info in addrs:
         if addr_info["addr_type"] == "unspendable":
@@ -146,24 +158,11 @@ def compile_proofs(bitcoin, proof_data):
             continue
 
         elif addr_info["addr_type"] in ("sh", "sh_wsh", "wsh"):
-            # Each address should have compressed or uncompressed keys in this set
-            pubkeys_left = copy.deepcopy(keys)
-
-            if addr_info["addr_type"] in ("wsh", "sh_wsh"):  # Switch to compressed
-                pubkeys_left = []
-                for key in keys:
-                    # Trying "both" compressed versions to avoid additional python dependencies
-                    even_key = "02" + key[2:-64]
-                    odd_key = "03" + key[2:-64]
-                    if even_key in addr_info["script"]:
-                        pubkeys_left.append(even_key)
-                    elif odd_key in addr_info["script"]:
-                        pubkeys_left.append(odd_key)
-                    else:
-                        raise Exception("Wrong compressed keys?")
-
-            # Should have one additional vanitygen key
-            assert len(pubkeys_left) == n_keys - 1
+            # Each address should have n compressed or uncompressed keys in this set
+            if addr_info["addr_type"] in ("wsh", "sh_wsh"):
+                pubkeys = pubkeys_compressed
+            else:
+                pubkeys = pubkeys_uncompressed
 
             # Next, we make sure the script is a multisig template
             pubkey_len = 33 * 2 if addr_info["addr_type"] != "sh" else 65 * 2
@@ -175,37 +174,27 @@ def compile_proofs(bitcoin, proof_data):
                     "Address script doesn't match multisig: {}".format(script)
                 )
             script = script[2:]
-            found_vanitykey = False
+            found_vanitykey = 0
+            found_pubkeys = 0
             wrong_keys = False
             ordered_pubkeys = []
-            for i in range(len(pubkeys_left) + 1):
+            while len(script) > 4:
                 if script[:2] != pubkey_sep:
                     raise Exception(
-                        "Address script doesn't match multisig: {}".format(pubkey_sep)
+                        f"Address script doesn't match multisig: {pubkey_sep} from {addr_info['script']} remaining {script}"
                     )
                 pubkey = script[2 : 2 + pubkey_len]
                 ordered_pubkeys.append(pubkey)
                 script = script[2 + pubkey_len :]
-                if pubkey not in pubkeys_left:
-                    if found_vanitykey == False:
-                        found_vanitykey = True
-                    else:
-                        # Some testnet values have wrong keys, ignore balance and continue
-                        wrong_keys = True
-                        break
+                if pubkey in pubkeys:
+                    found_pubkeys += 1
                 else:
-                    pubkeys_left.remove(pubkey)
+                    found_vanitykey += 1
 
-            if wrong_keys:
-                logging.warning(
-                    "Address {} is missing some given keys, skipping these values".format(
-                        addr_info["addr"]
-                    )
-                )
-                continue
-
-            assert len(pubkeys_left) == 0
-            assert found_vanitykey
+            # each bitmex 3/4 multisig should contain one per-account 'vanity' key, and 3 drawn from the set of founder keys
+            # note in testnet there are 4 possible founder keys to match against
+            assert found_pubkeys == 3
+            assert found_vanitykey == 1
 
             if script != hex(0x50 + n_keys)[2:] + "ae":
                 raise Exception(
