@@ -73,48 +73,7 @@ def compress(pubkeys):
     return result
 
 
-def compile_proofs(bitcoin, proof_data):
-    info = bitcoin.getblockchaininfo([])
-    # Re-org failure is really odd and unclear to the user when pruning
-    # so we're not bothering to support this.
-    if info["pruned"]:
-        logging.warning(
-            "Proof of Reserves on pruned nodes not well-supported. Node can get stuck reorging past pruned blocks."
-        )
-
-    network = info["chain"]
-
-    block_count = bitcoin.getblockcount([])
-    logging.info("Bitcoind alive: At block {}".format(block_count))
-
-    addresses = []
-
-    if network != proof_data["chain"]:
-        raise Exception(
-            "Network mismatch: bitcoind:{} vs proof:{}".format(
-                network, proof_data["chain"]
-            )
-        )
-
-    if block_count < proof_data["height"]:
-        raise Exception(
-            "Chain height locally is behind the claimed height in the proof. Bailing."
-        )
-
-    block_hash = bitcoin.getblockhash([proof_data["height"]])
-
-    try:
-        bitcoin.getblock([block_hash])
-    except Exception as e:
-        if "pruned":
-            raise Exception(
-                "Looks like your node has pruned beyond the reserve snapshot; bailing."
-            )
-        else:
-            raise Exception("Fatal: Unable to retrieve block at snapshot height")
-
-    logging.info("Running test against {} dataset".format(proof_data["chain"]))
-
+def compile_proofs(proof_data):
     m_sigs = proof_data["claim"]["m"]
     n_keys = proof_data["claim"]["n"]
     keys = proof_data["keys"]
@@ -142,6 +101,7 @@ def compile_proofs(bitcoin, proof_data):
     if dupe_scripts:
         raise ValueError("Duplicate scripts: {}".format(dupe_scripts))
 
+    descriptors = []
     unspendable = 0
     pubkeys_uncompressed = keys
     pubkeys_compressed = compress(keys)
@@ -227,11 +187,12 @@ def compile_proofs(bitcoin, proof_data):
         else:
             raise Exception("Unknown address type {}".format(addr_info["addr_type"]))
 
-        addresses.append({"desc": descriptor})
+        descriptors.append(descriptor)
 
     return {
-        "address": addresses,
+        "descriptors": descriptors,
         "height": proof_data["height"],
+        "chain": proof_data["chain"],
         "total": proof_data["total"],
         "unspendable": unspendable,
     }
@@ -241,19 +202,41 @@ def validate_proofs(bitcoin, proof_data):
     if proof_data is None:
         raise Exception("Needs proof arg")
 
-    info = bitcoin.getblockchaininfo([])
+    bci = bitcoin.getblockchaininfo([])
     # Re-org failure is really odd and unclear to the user when pruning
     # so we're not bothering to support this.
-    if info["pruned"]:
+    if bci["pruned"]:
         logging.warning(
             "Proof of Reserves on pruned nodes not well-supported. Node can get stuck reorging past pruned blocks."
         )
 
-    logging.info("Bitcoind alive: At block {}".format(bitcoin.getblockcount([])))
+    block_count = bitcoin.getblockcount([])
+    logging.info(f"Bitcoind: At block {block_count} chain {bci['chain']}")
 
-    descriptors_to_check = []
+    if bci["chain"] != proof_data["chain"]:
+        raise Exception(
+            f"Network mismatch: bitcoind:{bci['chain']} vs proof:{proof_data['chain']}"
+        )
+
+    if block_count < proof_data["height"]:
+        raise Exception(
+            f"Chain height {block_count} is behind the claimed height in the proof {proof_data['height']}. Bailing."
+        )
 
     block_hash = bitcoin.getblockhash([proof_data["height"]])
+    try:
+        bitcoin.getblock([block_hash])
+    except Exception as e:
+        if "pruned":
+            raise Exception(
+                "Looks like your node has pruned beyond the reserve snapshot; bailing."
+            )
+        else:
+            raise Exception("Fatal: Unable to retrieve block at snapshot height")
+
+    logging.info("Running test against {} dataset".format(proof_data["chain"]))
+
+    descriptors_to_check = proof_data["descriptors"]
 
     # Check that we know about that block before doing anything
     block_info = bitcoin.getblock([block_hash])
@@ -261,11 +244,6 @@ def validate_proofs(bitcoin, proof_data):
     # WARNING This can be unstable if there's a reorg at tip
     if block_info["confirmations"] < 1:
         raise Exception("Block {} is not in best chain!".format(block_hash))
-
-    # Load descriptors
-    descriptors_to_check = []
-    for addr_info in proof_data["address"]:
-        descriptors_to_check.append(addr_info["desc"])
 
     logging.info("Lets rewind")
 
@@ -348,7 +326,7 @@ def validate_proofs(bitcoin, proof_data):
 
 
 def reconsider_blocks(bitcoin):
-    logging.info("Reconsidering blocks and exiting.")
+    logging.info("Reconsidering all blocks")
     for tip in bitcoin.getchaintips([]):
         # Move on from timeout
         try:
@@ -402,7 +380,7 @@ if __name__ == "__main__":
 
     elif args.proof is not None:
         data = read_proof_file(args.proof)
-        compiled_proof = compile_proofs(bitcoin, data)
+        compiled_proof = compile_proofs(data)
         validated = validate_proofs(bitcoin, compiled_proof)
 
         if args.result_file is not None:
