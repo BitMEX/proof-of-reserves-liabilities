@@ -198,7 +198,7 @@ def compile_proofs(proof_data):
     }
 
 
-def validate_proofs(bitcoin, proof_data):
+def validate_proofs(bitcoin, proof_data, chunk_size=60000):
     if proof_data is None:
         raise Exception("Needs proof arg")
 
@@ -282,7 +282,6 @@ def validate_proofs(bitcoin, proof_data):
         best_hash = bitcoin.getbestblockhash([], timeout=30)
 
     # "413 Request Entity Too Large" otherwise
-    chunk_size = 60000
     num_scan_chunks = math.ceil(len(descriptors_to_check) / chunk_size)
     proven_amount = 0
     for i in range(num_scan_chunks):
