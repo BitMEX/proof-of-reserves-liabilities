@@ -90,6 +90,7 @@ def make_reserves_proof(bitcoin, dep_sizes=["0.0001", "0.00004", "0.000007"]):
     )
 
     dep_sizes = [Decimal(x) for x in dep_sizes]
+    dep_sats = [int(100000000 * dep) for dep in dep_sizes]
 
     # Deposit some specific amounts for testing the utxo scanning
     gen_addr = bitcoin.getnewaddress([])
@@ -122,7 +123,7 @@ def make_reserves_proof(bitcoin, dep_sizes=["0.0001", "0.00004", "0.000007"]):
         "height": proof_height,
         "chain": "regtest",
         "claim": {"m": 3, "n": 4},
-        "total": int(100000000 * sum(dep_sizes)),
+        "total": sum(dep_sats),
         "keys": static_uncompressed_keys,
     }
     proof["address"] = [
@@ -130,16 +131,19 @@ def make_reserves_proof(bitcoin, dep_sizes=["0.0001", "0.00004", "0.000007"]):
             "addr_type": "sh",
             "addr": legacy["address"],
             "script": legacy["redeemScript"],
+            "balance": dep_sats[0],
         },
         {
             "addr_type": "sh_wsh",
             "addr": nested["address"],
             "script": nested["redeemScript"],
+            "balance": dep_sats[1],
         },
         {
             "addr_type": "wsh",
             "addr": native["address"],
             "script": native["redeemScript"],
+            "balance": dep_sats[2],
         },
     ]
     return proof

@@ -103,6 +103,7 @@ def compile_proofs(proof_data):
 
     descriptors = []
     unspendable = 0
+    claimed = 0
     pubkeys_uncompressed = keys
     pubkeys_compressed = compress(keys)
 
@@ -186,14 +187,21 @@ def compile_proofs(proof_data):
                 )
         else:
             raise Exception("Unknown address type {}".format(addr_info["addr_type"]))
+        addr_balance = int(addr_info["balance"])
+        claimed += addr_balance
+        descriptors.append((descriptor, addr_balance, addr_info["addr"]))
 
-        descriptors.append(descriptor)
+    if claimed + unspendable != proof_data["total"]:
+        raise Exception(
+            f"Proof file total {proof_data['total']} does not match sum of individual claims {claimed}"
+        )
 
     return {
         "descriptors": descriptors,
         "height": proof_data["height"],
         "chain": proof_data["chain"],
         "total": proof_data["total"],
+        "claimed": claimed,
         "unspendable": unspendable,
     }
 
@@ -211,7 +219,7 @@ def validate_proofs(bitcoin, proof_data, chunk_size=60000):
         )
 
     block_count = bitcoin.getblockcount([])
-    logging.info(f"Bitcoind: At block {block_count} chain {bci['chain']}")
+    logging.info(f"Bitcoind at block {block_count} chain {bci['chain']}")
 
     if bci["chain"] != proof_data["chain"]:
         raise Exception(
@@ -234,89 +242,94 @@ def validate_proofs(bitcoin, proof_data, chunk_size=60000):
         else:
             raise Exception("Fatal: Unable to retrieve block at snapshot height")
 
-    logging.info("Running test against {} dataset".format(proof_data["chain"]))
+    logging.info(
+        f"Running against {proof_data['chain']} chain, rewinding tip to {block_hash}".format()
+    )
 
-    descriptors_to_check = proof_data["descriptors"]
+    # there could be forks leading from the block we want, so we need to invalidate them
+    # one-by-one, until nextblockhash is empty
+    while True:
+        # Check that we know about that block before doing anything
+        block_info = bitcoin.getblock([block_hash])
 
-    # Check that we know about that block before doing anything
-    block_info = bitcoin.getblock([block_hash])
+        # WARNING This can be unstable if there's a reorg at tip
+        if block_info["confirmations"] < 1:
+            raise Exception("Block {} is not in best chain!".format(block_hash))
 
-    # WARNING This can be unstable if there's a reorg at tip
-    if block_info["confirmations"] < 1:
-        raise Exception("Block {} is not in best chain!".format(block_hash))
-
-    logging.info("Lets rewind")
-
-    # Looks good, now let's get chaintip to where we want it to be
-    # This may take more syncing forward, or a reorg backwards.
-    #
-    # If we're at tip the key doesn't exist and we can't freeze, so continue
-    if "nextblockhash" in block_info:
-        try:
-            bitcoin.invalidateblock([block_info["nextblockhash"]])
-        except Exception:
-            logging.info("Invalidate call timed out... continuing")
-            pass
-
-    # Wait until we can get response from rpc server
-    bitcoin.wait_until_alive()
-
-    # Longer calls for next section to avoid timeouts from the reorg computation happening
-    best_hash = bitcoin.getbestblockhash([], timeout=60)
-    while best_hash != block_hash:
-        minute_wait = 0.5
-        logging.info(
-            "Reorging/Syncing to {}. THIS CAN TAKE A REALLY LONG TIME!!! Sleeping for {} minutes.".format(
-                block_hash, minute_wait
-            )
-        )
-        logging.info(
-            "Blocks to go: {}".format(
-                abs(
-                    block_info["height"]
-                    - bitcoin.getblock([best_hash], timeout=30)["height"]
+        # Looks good, now let's get chaintip to where we want it to be
+        # This may take more syncing forward, or a reorg backwards.
+        #
+        # If we're at tip the key doesn't exist, so continue
+        if "nextblockhash" in block_info:
+            try:
+                logging.info(
+                    f"Invalidating child block {block_info['nextblockhash']} and any successors"
                 )
-            )
-        )
-        time.sleep(60 * minute_wait)
-        best_hash = bitcoin.getbestblockhash([], timeout=30)
+                bitcoin.invalidateblock([block_info["nextblockhash"]])
+            except Exception:
+                logging.info("Invalidate call timed out... continuing")
+                pass
+        else:
+            logging.info("Tip no longer has a next block, continuing")
+            break
+
+        # Wait until we can get response from rpc server
+        bitcoin.wait_until_alive()
+
+        # if invalidateblock hit a HTTP timeout, this attempted to poll until it completes. This might not be sound
+        # in the case of multiple forks though, since we will jump to the next valid fork and not get back to best_hash
+
+        # best_hash = bitcoin.getbestblockhash([], timeout=60)
+        # while best_hash != block_hash:
+        #     minute_wait = 0.5
+        #     logging.info(
+        #         "Waiting for re-org to {block_hash}. This can take a long time. Sleeping for {minute_wait} minutes."
+        #     )
+        #     logging.info(
+        #         "Blocks to go: {}".format(
+        #             abs(block_info["height"] - bitcoin.getblock([best_hash], timeout=30)["height"])
+        #         )
+        #     )
+        #     time.sleep(60 * minute_wait)
+        #     best_hash = bitcoin.getbestblockhash([], timeout=30)
 
     # large batches are efficient, however you are likely to time out submitting the request, rather than on
     # bitcoin failing to do the workload.
     # "413 Request Entity Too Large" otherwise
+    descriptors_to_check = proof_data["descriptors"]
+
     num_scan_chunks = math.ceil(len(descriptors_to_check) / chunk_size)
     proven_amount = 0
     for i in range(num_scan_chunks):
         now = time.time()
-        logging.info(
-            "Scanning chunk {}/{}... this may take a while".format(
-                i + 1, num_scan_chunks
-            )
-        )
+        logging.info(f"Scanning chunk {i+1}/{num_scan_chunks}, this may take a while")
         # Making extremely long timeout for scanning job
+        chunk = descriptors_to_check[i * chunk_size : (i + 1) * chunk_size]
         res = bitcoin.scantxoutset(
-            ["start", descriptors_to_check[i * chunk_size : (i + 1) * chunk_size]],
+            ["start", [x[0] for x in chunk]],
             timeout=60 * 60,
         )
-        logging.info("Done. Took {} seconds".format(time.time() - now))
+        chunk_expected = sum([x[1] for x in chunk])
 
         if not res["success"]:
-            raise Exception("Scan results not successful???")
+            raise Exception("scantxoutset did not indicate success")
 
         if bitcoin.version >= 210000 and res["bestblock"] != block_hash:
             raise Exception(
-                "We retrieved snapshot from wrong block? {} vs {}".format(
-                    res["bestblock"], block_hash
-                )
+                f"Tip move during verify, unsound result. Got {res['bestblock']} expected {block_hash}"
             )
 
         chunk_amount = int(100000000 * res["total_amount"])
         if chunk_expected != chunk_amount:
             addrs = ",".join([x[2] for x in chunk])
-            logging.warning(f'chunk total differs, expected {chunk_expected} got {chunk_amount}, addrs: {addrs}')
+            logging.warning(
+                f"chunk total differs. Expected {chunk_expected} got {chunk_amount} for addrs {addrs}"
+            )
 
         proven_amount += chunk_amount
-        logging.info(f"...completed chunk. Verified {proven_amount} in {time.time() - now} seconds")
+        logging.info(
+            f"...completed chunk. Verified {chunk_amount} sats in {time.time() - now} seconds"
+        )
 
     logging.info(
         "***RESULTS***\nHeight of proof: {}\nBlock proven against: {}\nClaimed amount (sats): {}\nProven amount(sats): {}".format(
@@ -383,7 +396,8 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--chunk-size",
-        default=10000, type=int,
+        default=10000,
+        type=int,
     )
     args = parser.parse_args()
 
@@ -411,9 +425,17 @@ if __name__ == "__main__":
             "IMPORTANT! Call this script with --reconsider to bring your bitcoin node back to tip when satisfied with the results"
         )
 
-        unspendable = validate["unspendable"] if args.allow_unspendable else 0
-        if validated["amount_claimed"] > validated["amount_proven"] + unspendable:
+        if validated["amount_proven"] < validated["amount_claimed"]:
             print(
-                f"WARNING: More claimed {validated['amount_claimed']} than proven {validated['amount_proven']} (unspendable {unspendable})"
+                f"WARNING: More claimed {validated['amount_claimed']} than proven {validated['amount_proven']}"
+            )
+            exit(-1)
+
+        allowed_unspendable = (
+            compiled_proof["unspendable"] if args.allow_unspendable else 0
+        )
+        if compiled_proof["total"] > validated["amount_proven"] + allowed_unspendable:
+            print(
+                f"WARNING: Total claimed {validated['amount_claimed']} exceeds proven {validated['amount_proven']} plus allowed unspendable {allowed_unspendable}"
             )
             exit(-1)
