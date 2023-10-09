@@ -3,6 +3,7 @@
 import argparse
 import copy
 from collections import Counter
+import decimal
 import json
 import logging
 import math
@@ -37,7 +38,7 @@ class BitcoinRPC:
             r = requests.post(self.bitcoind, json=data, **kwargs)
             logging.debug(r.text)
             r.raise_for_status()
-            result = r.json()
+            result = r.json(parse_float=decimal.Decimal)
             if result["error"] is not None:
                 raise JsonRPCException(result["error"])
             return result["result"]
