@@ -281,6 +281,8 @@ def validate_proofs(bitcoin, proof_data, chunk_size=60000):
         time.sleep(60 * minute_wait)
         best_hash = bitcoin.getbestblockhash([], timeout=30)
 
+    # large batches are efficient, however you are likely to time out submitting the request, rather than on
+    # bitcoin failing to do the workload.
     # "413 Request Entity Too Large" otherwise
     num_scan_chunks = math.ceil(len(descriptors_to_check) / chunk_size)
     proven_amount = 0
@@ -308,30 +310,44 @@ def validate_proofs(bitcoin, proof_data, chunk_size=60000):
                 )
             )
 
-        proven_amount += int(100000000 * res["total_amount"])
+        chunk_amount = int(100000000 * res["total_amount"])
+        if chunk_expected != chunk_amount:
+            addrs = ",".join([x[2] for x in chunk])
+            logging.warning(f'chunk total differs, expected {chunk_expected} got {chunk_amount}, addrs: {addrs}')
+
+        proven_amount += chunk_amount
+        logging.info(f"...completed chunk. Verified {proven_amount} in {time.time() - now} seconds")
 
     logging.info(
         "***RESULTS***\nHeight of proof: {}\nBlock proven against: {}\nClaimed amount (sats): {}\nProven amount(sats): {}".format(
-            proof_data["height"], block_hash, proof_data["total"], proven_amount
+            proof_data["height"], block_hash, proof_data["claimed"], proven_amount
         )
     )
     return {
-        "amount_claimed": proof_data["total"],
+        "amount_claimed": proof_data["claimed"],
         "amount_proven": proven_amount,
-        "unspendable": proof_data["unspendable"],
         "height": proof_data["height"],
         "block": block_hash,
     }
 
 
 def reconsider_blocks(bitcoin):
-    logging.info("Reconsidering all blocks")
+    # no need to consider forks below our current height
+    bci = bitcoin.getblockchaininfo([])
+
+    logging.info(f"Reconsidering all forks above height {bci['blocks']}")
     for tip in bitcoin.getchaintips([]):
-        # Move on from timeout
         try:
-            bitcoin.reconsiderblock([tip["hash"]], timeout=0.01)
-        except Exception:
-            pass
+            if tip["height"] >= bci["blocks"]:
+                if tip["status"] != "active":
+                    logging.info(f"Reconsidering non-active tip: {tip}")
+                    bitcoin.reconsiderblock([tip["hash"]], timeout=60 * 60)
+        except requests.exceptions.ReadTimeout:
+            logging.exception("while reconsiding tip")
+
+    bitcoin.wait_until_alive()
+    bci = bitcoin.getblockchaininfo([])
+    logging.info(f"Tip is now at {bci['blocks']}")
 
 
 if __name__ == "__main__":
@@ -365,6 +381,10 @@ if __name__ == "__main__":
         help="Allow unspendable (unproven) claims in total (testnet)",
         action="store_true",
     )
+    parser.add_argument(
+        "--chunk-size",
+        default=10000, type=int,
+    )
     args = parser.parse_args()
 
     bitcoin = BitcoinRPC(args.bitcoin)
@@ -380,7 +400,7 @@ if __name__ == "__main__":
     elif args.proof is not None:
         data = read_proof_file(args.proof)
         compiled_proof = compile_proofs(data)
-        validated = validate_proofs(bitcoin, compiled_proof)
+        validated = validate_proofs(bitcoin, compiled_proof, chunk_size=args.chunk_size)
 
         if args.result_file is not None:
             logging.info(f"Writing results {validated} to {args.result_file}")
