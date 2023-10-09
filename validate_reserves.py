@@ -244,7 +244,7 @@ def validate_proofs(bitcoin, proof_data, chunk_size=60000):
             raise Exception("Fatal: Unable to retrieve block at snapshot height")
 
     logging.info(
-        f"Running against {proof_data['chain']} chain, rewinding tip to {block_hash}".format()
+        f"Running against {proof_data['chain']} chain, rewinding tip to {block_hash}"
     )
 
     # there could be forks leading from the block we want, so we need to invalidate them
