@@ -110,7 +110,8 @@ def compile_proofs(proof_data):
 
     # Lastly, addresses
     for addr_info in addrs:
-        if addr_info["addr_type"] == "unspendable":
+        addr_type = addr_info["addr_type"]
+        if addr_type == "unspendable":
             logging.warning(
                 "Address {} is marked as unspendable, skipping this value".format(
                     addr_info["addr"]
@@ -119,9 +120,9 @@ def compile_proofs(proof_data):
             unspendable += int(addr_info["balance"])
             continue
 
-        elif addr_info["addr_type"] in ("sh", "sh_wsh", "wsh"):
+        elif addr_type in ("sh", "sh_wsh", "wsh"):
             # Each address should have n compressed or uncompressed keys in this set
-            if addr_info["addr_type"] in ("wsh", "sh_wsh"):
+            if addr_type in ("wsh", "sh_wsh"):
                 pubkeys = pubkeys_compressed
             else:
                 pubkeys = pubkeys_uncompressed
@@ -165,16 +166,16 @@ def compile_proofs(proof_data):
 
             # Lastly, construct the descriptor for querying
             ordered_join = ",".join(ordered_pubkeys)
-            if addr_info["addr_type"] == "sh":
+            if addr_type == "sh":
                 descriptor = "sh(multi({},{}))".format(m_sigs, ordered_join)
-            elif addr_info["addr_type"] == "sh_wsh":
+            elif addr_type == "sh_wsh":
                 descriptor = "sh(wsh(multi({},{})))".format(m_sigs, ordered_join)
-            elif addr_info["addr_type"] == "wsh":
+            elif addr_type == "wsh":
                 descriptor = "wsh(multi({},{}))".format(m_sigs, ordered_join)
             else:
                 raise Exception("Unexpected addr_type")
 
-        elif addr_info["addr_type"] in ("wpkh"):
+        elif addr_type == "wpkh" or addr_type.startswith("multisig_"):
             # check xpub, then we present descriptor as script
             for xp in xpubs:
                 if xp in addr_info["script"]:
@@ -187,7 +188,7 @@ def compile_proofs(proof_data):
                     )
                 )
         else:
-            raise Exception("Unknown address type {}".format(addr_info["addr_type"]))
+            raise Exception("Unknown address type {}".format(addr_type))
         addr_balance = int(addr_info["balance"])
         claimed += addr_balance
         descriptors.append((descriptor, addr_balance, addr_info["addr"]))
