@@ -295,7 +295,9 @@ def validate_proofs(bitcoin, proof_data, chunk_size=60000):
         #     time.sleep(60 * minute_wait)
         #     best_hash = bitcoin.getbestblockhash([], timeout=30)
 
-    # large batches are efficient, however you are likely to time out submitting the request, rather than on
+    # getting the descriptors computed in function compile_proofs above
+    # sending them by large batches (batch==chunk), because this is more efficient/
+    # however you are likely to time out submitting the request, rather than on
     # bitcoin failing to do the workload.
     # "413 Request Entity Too Large" otherwise
     descriptors_to_check = proof_data["descriptors"]
@@ -305,12 +307,18 @@ def validate_proofs(bitcoin, proof_data, chunk_size=60000):
     for i in range(num_scan_chunks):
         now = time.time()
         logging.info(f"Scanning chunk {i+1}/{num_scan_chunks}, this may take a while")
-        # Making extremely long timeout for scanning job
+        # getting the subset of descriptors for this chunk
         chunk = descriptors_to_check[i * chunk_size : (i + 1) * chunk_size]
+        
+        # getting the amount stored on those descriptors (res["total_amount"]) using scantxoutset
+        # ref: https://developer.bitcoin.org/reference/rpc/scantxoutset.html
         res = bitcoin.scantxoutset(
             ["start", [x[0] for x in chunk]],
+            # Making extremely long timeout for scanning job
             timeout=60 * 60,
         )
+        # a chunk is of the form (descriptor, addr_balance, addr_info["addr"])
+        # [x[1] is claimed balance (field "balance" in the yaml file)
         chunk_expected = sum([x[1] for x in chunk])
 
         if not res["success"]:
@@ -320,7 +328,7 @@ def validate_proofs(bitcoin, proof_data, chunk_size=60000):
             raise Exception(
                 f"Tip move during verify, unsound result. Got {res['bestblock']} expected {block_hash}"
             )
-
+        # chunk_amount is what there is actually on chain for those descriptors
         chunk_amount = int(100000000 * res["total_amount"])
         if chunk_expected != chunk_amount:
             addrs = ",".join([x[2] for x in chunk])
