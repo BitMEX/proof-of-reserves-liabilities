@@ -1,7 +1,6 @@
 #!/usr/bin/python3
 
 import argparse
-import copy
 from collections import Counter
 import decimal
 import json
@@ -51,7 +50,7 @@ class BitcoinRPC:
                 time.sleep(1)
                 self.version = self.getnetworkinfo([])["version"]
                 break
-            except Exception as e:
+            except Exception:
                 logging.exception("Bitcoin server not responding, sleeping for retry.")
 
 
@@ -139,7 +138,6 @@ def compile_proofs(proof_data):
             script = script[2:]
             found_vanitykey = 0
             found_pubkeys = 0
-            wrong_keys = False
             ordered_pubkeys = []
             while len(script) > 4:
                 if script[:2] != pubkey_sep:
@@ -236,7 +234,7 @@ def validate_proofs(bitcoin, proof_data, chunk_size=60000):
     block_hash = bitcoin.getblockhash([proof_data["height"]])
     try:
         bitcoin.getblock([block_hash])
-    except Exception as e:
+    except Exception:
         if "pruned":
             raise Exception(
                 "Looks like your node has pruned beyond the reserve snapshot; bailing."
