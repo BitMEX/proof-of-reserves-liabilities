@@ -103,7 +103,6 @@ def validate_liabilities(block_height, tree, account, nonce, account_nonce, args
         )
 
         # Next validate tree up to root, printing out single proof
-        proof_vector = []
         current_index = leaf_index
 
         proof_nodes = []  # [us,      parent,         ..., n-parent,     root]

@@ -18,4 +18,5 @@ COPY generate_liabilities.py /app/generate_liabilities.py
 COPY validate_liabilities.py /app/validate_liabilities.py
 COPY test/test_liabilities.py /app/test_liabilities.py
 RUN python /app/test_liabilities.py
-RUN black --check /app/*.py
+RUN ruff check /app/*.py
+RUN ruff format --check /app/*.py

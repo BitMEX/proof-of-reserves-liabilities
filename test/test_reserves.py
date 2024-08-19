@@ -50,7 +50,7 @@ class BitcoinRPC:
                 time.sleep(1)
                 self.version = self.getnetworkinfo([])["version"]
                 break
-            except Exception as e:
+            except Exception:
                 logging.info("Bitcoin server not responding, sleeping for retry.")
 
 
@@ -211,7 +211,7 @@ class TestReserves(unittest.TestCase):
             "--result-file",
             proof_hash + "_result.json",
         ]
-        output = subprocess.check_output(run_args).decode("utf-8")
+        subprocess.check_output(run_args).decode("utf-8")
 
         # Check output file's value
         with open(proof_hash + "_result.json") as f:
@@ -230,7 +230,7 @@ class TestReserves(unittest.TestCase):
             "regtest://user:password@127.0.0.1:18443",
             "--reconsider",
         ]
-        output = subprocess.check_output(run_args).decode("utf-8")
+        subprocess.check_output(run_args).decode("utf-8")
         while self.bitcoin.getblockcount([]) != tip_height:
             time.sleep(0.1)
         self.assertEqual(self.bitcoin.getbestblockhash([]), tip_hash)
