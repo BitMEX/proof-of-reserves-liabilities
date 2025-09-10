@@ -2,5 +2,5 @@ certifi==2024.7.4
 chardet==4.0.0
 idna==3.7
 PyYAML==5.4.1
-requests==2.32.2
+requests==2.32.4
 urllib3==1.26.19
