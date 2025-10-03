@@ -39,7 +39,7 @@ class TestLiabilities(unittest.TestCase):
         # any 8 byte number, unique per real proof for privacy
         block_height = str(random.randrange(2**64))
         run_args = [
-            "python",
+            "python3",
             "/app/generate_liabilities.py",
             "--liabilities",
             "balances.txt",
@@ -74,7 +74,7 @@ class TestLiabilities(unittest.TestCase):
                         ).hex()
                     # Call validator tool
                     run_args = [
-                        "python",
+                        "python3",
                         "/app/validate_liabilities.py",
                         "--account",
                         account,
