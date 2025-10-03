@@ -202,7 +202,7 @@ class TestReserves(unittest.TestCase):
 
         # Run validator tool against the proof file
         run_args = [
-            "python",
+            "python3",
             "/app/validate_reserves.py",
             "--bitcoin",
             "regtest://user:password@127.0.0.1:18443",
@@ -224,7 +224,7 @@ class TestReserves(unittest.TestCase):
 
         # --reconsider call to make sure that it resets blockheight of the node, don't use rpchost to check default
         run_args = [
-            "python",
+            "python3",
             "/app/validate_reserves.py",
             "--bitcoin",
             "regtest://user:password@127.0.0.1:18443",
@@ -243,7 +243,7 @@ class TestReserves(unittest.TestCase):
 
         # Run validator tool against the proof file
         run_args = [
-            "python",
+            "python3",
             "/app/validate_reserves.py",
             "--bitcoin",
             "regtest://user:password@127.0.0.1:18443",
