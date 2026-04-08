@@ -191,17 +191,30 @@ def compile_proofs(proof_data):
         claimed += addr_balance
         descriptors.append((descriptor, addr_balance, addr_info["addr"]))
 
-    if claimed + unspendable != proof_data["total"]:
+    # Custodial addresses (third-party custody)
+    # These are verified on-chain (UTXO exists) but ownership cannot be
+    # proven cryptographically since the keys are held by the custodian.
+    custodial_addrs = proof_data.get("custodial", [])
+    custodial_total = 0
+    custodial_descriptors = []
+    for addr_info in custodial_addrs:
+        addr_balance = int(addr_info["balance"])
+        custodial_total += addr_balance
+        descriptor = f"addr({addr_info['addr']})"
+        custodial_descriptors.append((descriptor, addr_balance, addr_info["addr"]))
+
+    if claimed + unspendable + custodial_total != proof_data["total"]:
         raise Exception(
-            f"Proof file total {proof_data['total']} does not match sum of individual claims {claimed}"
+            f"Proof file total {proof_data['total']} does not match "
+            f"sum of claims: owned={claimed} + unspendable={unspendable} + custodial={custodial_total}"
         )
 
     return {
-        "descriptors": descriptors,
+        "descriptors": descriptors + custodial_descriptors,
         "height": proof_data["height"],
         "chain": proof_data["chain"],
         "total": proof_data["total"],
-        "claimed": claimed,
+        "claimed": claimed + custodial_total,
         "unspendable": unspendable,
     }
 
