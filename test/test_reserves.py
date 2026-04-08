@@ -1,5 +1,6 @@
 #! /usr/bin/env python3
 
+import copy
 from decimal import Decimal
 import json
 import logging
@@ -234,6 +235,87 @@ class TestReserves(unittest.TestCase):
         while self.bitcoin.getblockcount([]) != tip_height:
             time.sleep(0.1)
         self.assertEqual(self.bitcoin.getbestblockhash([]), tip_hash)
+
+        # Test custodial section: fund a plain address (simulating third-party custody),
+        # add it to the original proof under "custodial", and verify the validator
+        # includes it in the proven amount.
+        # First restore the chain tip so we can mine new blocks.
+        run_args = [
+            "python3",
+            "/app/validate_reserves.py",
+            "--bitcoin",
+            "regtest://user:password@127.0.0.1:18443",
+            "--reconsider",
+        ]
+        subprocess.check_output(run_args).decode("utf-8")
+        while self.bitcoin.getblockcount([]) != tip_height:
+            time.sleep(0.1)
+
+        custodial_addr = self.bitcoin.getnewaddress([])
+        custodial_amount = Decimal("0.00005")
+        custodial_sats = int(100000000 * custodial_amount)
+        self.bitcoin.sendtoaddress([custodial_addr, str(custodial_amount)])
+
+        gen_addr = self.bitcoin.getnewaddress([])
+        self.bitcoin.generatetoaddress([1, gen_addr])
+        custodial_proof_height = self.bitcoin.getblockcount([])
+
+        # Mine extra blocks above the proof height
+        self.bitcoin.generatetoaddress([5, gen_addr])
+
+        # At custodial_proof_height, the native segwit address from the original
+        # proof has an extra 1 BTC deposit (sent by make_reserves_proof above the
+        # original proof height but below custodial_proof_height). We must account
+        # for this in the total.
+        extra_deposit_sats = 100000000  # 1 BTC
+        proof_with_custodial = copy.deepcopy(proof)
+        proof_with_custodial["address"] = proof_with_custodial["address"][:3]
+        # Update the native segwit address balance to include the extra 1 BTC
+        for addr_entry in proof_with_custodial["address"]:
+            if addr_entry["addr_type"] == "wsh":
+                addr_entry["balance"] = int(addr_entry["balance"]) + extra_deposit_sats
+        proof_with_custodial["height"] = custodial_proof_height
+        proof_with_custodial["total"] = (
+            proof["total"] + extra_deposit_sats + custodial_sats
+        )
+        proof_with_custodial["custodial"] = [
+            {
+                "addr_type": "deposit",
+                "addr": custodial_addr,
+                "balance": custodial_sats,
+            }
+        ]
+
+        with open("test_custodial.proof", "w") as f:
+            yaml.dump(proof_with_custodial, f)
+
+        custodial_proof_hash = self.bitcoin.getblockhash([custodial_proof_height])
+        run_args = [
+            "python3",
+            "/app/validate_reserves.py",
+            "--bitcoin",
+            "regtest://user:password@127.0.0.1:18443",
+            "--proof",
+            "test_custodial.proof",
+            "--result-file",
+            custodial_proof_hash + "_custodial_result.json",
+        ]
+        subprocess.check_output(run_args).decode("utf-8")
+
+        with open(custodial_proof_hash + "_custodial_result.json") as f:
+            result = json.load(f)
+            self.assertEqual(result["amount_proven"], proof_with_custodial["total"])
+            self.assertEqual(result["amount_claimed"], proof_with_custodial["total"])
+
+        # Reconsider to restore tip
+        run_args = [
+            "python3",
+            "/app/validate_reserves.py",
+            "--bitcoin",
+            "regtest://user:password@127.0.0.1:18443",
+            "--reconsider",
+        ]
+        subprocess.check_output(run_args).decode("utf-8")
 
         # check rejection of proofs containing duplicate addresses/scripts
         proof["address"].append(proof["address"][0])
